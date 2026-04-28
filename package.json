@@ -10,7 +10,13 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/bin/ovogogogo.js",
-    "dev": "tsx bin/ovogogogo.ts"
+    "dev": "tsx bin/ovogogogo.ts",
+    "lint": "eslint src/ bin/",
+    "lint:fix": "eslint src/ bin/ --fix",
+    "format": "prettier --write src/ bin/",
+    "format:check": "prettier --check src/ bin/",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -22,8 +28,14 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.59.1",
+    "vitest": "^4.1.5"
   }
 }

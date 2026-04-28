@@ -93,6 +93,23 @@ export function registerAgentFactory(
 }
 
 /**
+ * Reset the factory registration — useful for testing to avoid state leakage
+ * between test runs. Not intended for production use.
+ */
+export function resetAgentFactory(): void {
+  _engineFactory = null
+  _currentConfig = null
+  _currentRenderer = null
+}
+
+/**
+ * Check if the factory has been registered. Useful for tests and debugging.
+ */
+export function isFactoryRegistered(): boolean {
+  return _engineFactory !== null
+}
+
+/**
  * Shared runner used by both AgentTool and MultiAgentTool.
  * Returns a ToolResult with prefixed agent type.
  *
