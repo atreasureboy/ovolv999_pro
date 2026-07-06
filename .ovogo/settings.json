@@ -1,14 +1,3 @@
 {
-  "engagement": {
-    "name": "ZhhovoTop 外网渗透 2026-Q2",
-    "phase": "recon",
-    "targets": [
-      "zhhovo.top"
-    ],
-    "out_of_scope": [],
-    "start_date": "2026-04-09",
-    "end_date": "2026-04-30",
-    "notes": "靶场环境，已加白名单。本机 VM 运行，有安全审查网关。"
-  },
   "hooks": {}
 }

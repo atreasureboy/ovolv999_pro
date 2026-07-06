@@ -10,6 +10,7 @@
 
 import { appendFileSync, existsSync, readFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 
 export interface EpisodicMemoryEntry {
   id: string
@@ -22,10 +23,8 @@ export interface EpisodicMemoryEntry {
   timestamp: string      // ISO 8601
 }
 
-let _epCounter = 0
 function nextId(): string {
-  _epCounter++
-  return `epi_${Date.now()}_${_epCounter}`
+  return `epi_${randomUUID()}`
 }
 
 export class EpisodicMemory {

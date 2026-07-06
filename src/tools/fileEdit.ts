@@ -135,5 +135,5 @@ function findClosestMatch(content: string, target: string): string {
     return `Hint: The first line "${firstLine.slice(0, 60)}..." exists in the file, but the surrounding context doesn't match. Read the file around that line to get the exact content.`
   }
 
-  return `Hint: Use ReadFile to view the current file content and ensure old_string matches exactly.`
+  return `Hint: Use Read to view the current file content and ensure old_string matches exactly.`
 }

@@ -15,7 +15,7 @@
  */
 
 import { createWriteStream } from 'fs'
-import type { WriteStream } from 'fs'
+import { str } from '../core/strings.js'
 
 // ─────────────────────────────────────────────────────────────
 // ANSI helpers
@@ -25,7 +25,6 @@ const ESC = '\x1b['
 const RESET = '\x1b[0m'
 const BOLD = '\x1b[1m'
 const DIM = '\x1b[2m'
-const ITALIC = '\x1b[3m'
 
 // Foreground colors
 const FG = {
@@ -45,19 +44,6 @@ const FG = {
   brightMagenta: `${ESC}95m`,
   brightCyan: `${ESC}96m`,
   brightWhite: `${ESC}97m`,
-}
-
-// Background colors
-const BG = {
-  blue: `${ESC}44m`,
-  magenta: `${ESC}45m`,
-  brightBlack: `${ESC}100m`,
-  brightRed: `${ESC}101m`,
-  brightGreen: `${ESC}102m`,
-  brightYellow: `${ESC}103m`,
-  brightBlue: `${ESC}104m`,
-  brightMagenta: `${ESC}105m`,
-  brightCyan: `${ESC}106m`,
 }
 
 // Cursor
@@ -150,7 +136,6 @@ const STRIPE = {
   agent:    `${FG.brightMagenta}│${RESET}`,
   compact:  `${FG.yellow}│${RESET}`,
   info:     `${FG.brightBlack}│${RESET}`,
-  dispatch: `${FG.cyan}│${RESET}`,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -184,8 +169,9 @@ export class Renderer {
   }
 
   static forFile(filePath: string): Renderer {
-    const fileStream = createWriteStream(filePath, { flags: 'a' }) as unknown as NodeJS.WritableStream
-    return new Renderer({ stream: fileStream })
+    const fileStream = createWriteStream(filePath, { flags: 'a' })
+    fileStream.on('error', () => { /* best-effort — never crash on file write failure */ })
+    return new Renderer({ stream: fileStream as unknown as NodeJS.WritableStream })
   }
 
   // ── Utility ──────────────────────────────────────────────────
@@ -234,20 +220,10 @@ export class Renderer {
 
     // Tagline
     this.write(
-      `  ${DIM}AI-Powered Red Team Coordination Engine — ` +
-      `${FG.brightMagenta}autonomous penetration testing${RESET}${DIM}${RESET}\n`,
+      `  ${DIM}Unified Agent Harness — ` +
+      `${FG.brightMagenta}module-driven autonomous coding${RESET}${DIM}${RESET}\n`,
     )
     this.write('\n')
-  }
-
-  // ── Section separator ────────────────────────────────────────
-
-  separator(): void {
-    const inner = Math.min(this.termWidth - 8, 68)
-    const left = `${FG.brightBlack}◇${RESET}`
-    const right = `${FG.brightBlack}◇${RESET}`
-    const mid = `${DIM}${'·'.repeat(inner)}${RESET}`
-    this.write(`\n  ${left}${mid}${right}\n`)
   }
 
   // ── Human message — framed box ──────────────────────────────
@@ -267,17 +243,6 @@ export class Renderer {
     }
 
     this.write(`  ${botBar}\n`)
-  }
-
-  // ── Assistant text output ───────────────────────────────────
-
-  assistantText(text: string): void {
-    const width = Math.min(this.termWidth - 8, 96)
-    const lines = wrapText(text, width).split('\n')
-    this.write('\n')
-    for (const line of lines) {
-      this.write(`  ${STRIPE.assistant} ${line}\n`)
-    }
   }
 
   // ── Streaming text output ───────────────────────────────────
@@ -361,14 +326,6 @@ export class Renderer {
       WebSearch:         FG.cyan,
       TodoWrite:         FG.brightGreen,
       Agent:             FG.brightMagenta,
-      MultiAgent:        FG.brightMagenta,
-      DispatchAgent:     FG.cyan,
-      CheckDispatch:     FG.cyan,
-      GetDispatchResult: FG.cyan,
-      FindingWrite:      FG.brightGreen,
-      FindingList:       FG.brightGreen,
-      WeaponRadar:       FG.brightYellow,
-      C2:                FG.brightRed,
       ShellSession:      FG.brightRed,
       TmuxSession:       FG.brightRed,
     }
@@ -387,14 +344,6 @@ export class Renderer {
       WebSearch:         `${FG.cyan}◎${RESET}`,
       TodoWrite:         `${FG.brightGreen}☐${RESET}`,
       Agent:             `${FG.brightMagenta}⎇${RESET}`,
-      MultiAgent:        `${FG.brightMagenta}⎈${RESET}`,
-      DispatchAgent:     `${FG.cyan}⇢${RESET}`,
-      CheckDispatch:     `${FG.cyan}⇠${RESET}`,
-      GetDispatchResult: `${FG.cyan}⇤${RESET}`,
-      FindingWrite:      `${FG.brightGreen}⚑${RESET}`,
-      FindingList:       `${FG.brightGreen}⚑${RESET}`,
-      WeaponRadar:       `${FG.brightYellow}⚔${RESET}`,
-      C2:                `${FG.brightRed}⚡${RESET}`,
       ShellSession:      `${FG.brightRed}⌁${RESET}`,
       TmuxSession:       `${FG.brightRed}⌁${RESET}`,
     }
@@ -404,56 +353,39 @@ export class Renderer {
   private formatToolPreview(toolName: string, input: Record<string, unknown>): string {
     switch (toolName) {
       case 'Bash': {
-        const cmd = String(input.command ?? '').trim()
+        const cmd = str(input.command).trim()
         return cmd.length > 80 ? cmd.slice(0, 77) + '…' : cmd
       }
       case 'Read': {
-        const fp = String(input.file_path ?? '')
-        const offset = input.offset ? ` +${input.offset}` : ''
+        const fp = str(input.file_path)
+        const offset = input.offset ? ` +${str(input.offset)}` : ''
         return fp + offset
       }
       case 'Write': {
-        const fp = String(input.file_path ?? '')
-        const content = String(input.content ?? '')
+        const fp = str(input.file_path)
+        const content = str(input.content)
         const lines = content.split('\n').length
         return `${fp}  (${lines} lines)`
       }
       case 'Edit': {
-        const fp = String(input.file_path ?? '')
-        const old = String(input.old_string ?? '').split('\n')[0]?.slice(0, 40) ?? ''
+        const fp = str(input.file_path)
+        const old = str(input.old_string).split('\n')[0]?.slice(0, 40) ?? ''
         return `${fp}  "${old}…"`
       }
       case 'Glob': {
-        const pattern = String(input.pattern ?? '')
-        const path = input.path ? ` in ${input.path}` : ''
+        const pattern = str(input.pattern)
+        const path = input.path ? ` in ${str(input.path)}` : ''
         return `${pattern}${path}`
       }
       case 'Grep': {
-        const pattern = String(input.pattern ?? '')
-        const glob = input.glob ? ` [${input.glob}]` : ''
+        const pattern = str(input.pattern)
+        const glob = input.glob ? ` [${str(input.glob)}]` : ''
         return `/${pattern}/${glob}`
       }
       case 'Agent': {
-        const type = input.subagent_type ? String(input.subagent_type) : ''
-        const desc = input.description ? String(input.description) : ''
+        const type = input.subagent_type ? str(input.subagent_type) : ''
+        const desc = input.description ? str(input.description) : ''
         return type ? `[${type}] ${desc}` : desc
-      }
-      case 'MultiAgent': {
-        const agents = input.agents
-        if (Array.isArray(agents)) {
-          const types = agents
-            .filter((a: any) => a && typeof a === 'object')
-            .map((a: any) => a.subagent_type ?? 'unknown')
-            .join(', ')
-          return `×${agents.length} agents: ${types}`
-        }
-        return ''
-      }
-      case 'WeaponRadar': {
-        const q = input.query ?? input.queries
-        if (Array.isArray(q)) return `${q.length} queries`
-        if (q) return `"${String(q).slice(0, 50)}"`
-        return ''
       }
       default:
         return JSON.stringify(input).slice(0, 80)
@@ -497,6 +429,7 @@ export class Renderer {
       `  ${FG.brightMagenta}${BOLD}${frame}${RESET} ` +
       `${FG.brightBlack}${verb}${RESET}${FG.brightBlack}…${RESET}`
     this.write(CURSOR.col(1) + CURSOR.clearToEnd + line)
+    // eslint-disable-next-line no-control-regex -- stripping ANSI escape sequences
     this.lastSpinnerLineLen = line.replace(/\x1b\[[^m]*m/g, '').length
   }
 
@@ -600,37 +533,6 @@ export class Renderer {
       `\n  ${STRIPE.compact}  ${FG.brightYellow}⚠${RESET}` +
         `  ${DIM}上下文 ${pctStr}% · ~${Math.round(tokens / 1000)}k / ${Math.round(maxTokens / 1000)}k tokens — 接近压缩阈值${RESET}\n`,
     )
-  }
-
-  contextStats(tokens: number, maxTokens: number, pct: number): void {
-    const pctInt = Math.round(pct * 100)
-    const filled = Math.round(pct * 16)
-    const bar = '█'.repeat(filled) + '░'.repeat(16 - filled)
-    const color = pct >= 0.85 ? FG.red : pct >= 0.70 ? FG.yellow : FG.brightBlack
-    this.write(
-      `  ${DIM}ctx [${color}${bar}${RESET}${DIM}] ${pctInt}% · ~${Math.round(tokens / 1000)}k/${Math.round(maxTokens / 1000)}k${RESET}\n`,
-    )
-  }
-
-  // ── Turn stats ──────────────────────────────────────────────
-
-  turnStats(iterations: number, model: string): void {
-    this.write(`\n  ${DIM}↻ ${iterations} turn${iterations !== 1 ? 's' : ''} · ${model}${RESET}\n`)
-  }
-
-  // ── Dispatch display ────────────────────────────────────────
-
-  dispatchStarted(id: string, agentType: string, description: string): void {
-    this.write(
-      `\n  ${STRIPE.dispatch}  ${FG.cyan}⇢${RESET} ${BOLD}${FG.brightCyan}Dispatch${RESET}` +
-        `  ${DIM}[${agentType}]${RESET} ${FG.brightWhite}${description}${RESET}` +
-        `  ${DIM}id: ${id}${RESET}\n`,
-    )
-  }
-
-  dispatchCompleted(id: string, success: boolean): void {
-    const icon = success ? `${FG.brightGreen}✓${RESET}` : `${FG.brightRed}✗${RESET}`
-    this.write(`  ${STRIPE.dispatch}  ${icon} ${DIM}Dispatch ${id} ${success ? 'completed' : 'failed'}${RESET}\n`)
   }
 
   // ── Input prompt ────────────────────────────────────────────

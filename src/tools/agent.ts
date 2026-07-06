@@ -1,49 +1,68 @@
 /**
  * AgentTool — spawn a specialized sub-agent to handle a focused subtask.
  *
- * Red team agent types are mapped to purpose-built system prompts in
- * src/prompts/agentPrompts.ts.  Multiple Agent calls in one LLM response
- * execute in parallel (Agent is in CONCURRENCY_SAFE_TOOLS).
+ * Features:
+ *   - AgentConfig-driven (preset name or custom config)
+ *   - Verification gate: auto-run tsc/lint after sub-agent completes
+ *   - Call chain tracking: prevent infinite recursion + audit depth
+ *   - Parallel execution (multiple Agent calls in one response)
  */
 
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import type { EngineConfig } from '../core/types.js'
-import { getAgentTypeSystemPrompt } from '../prompts/system.js'
-import { getRedTeamAgentPrompt, type RedTeamAgentType } from '../prompts/agentPrompts.js'
+import type { AgentConfig } from '../core/agentPresets.js'
+import { resolveAgentConfig, PRESET_NAMES } from '../core/agentPresets.js'
 import { Renderer } from '../ui/renderer.js'
 import { tmuxLayout } from '../ui/tmuxLayout.js'
 import { appendFileSync } from 'fs'
 import { join } from 'path'
+import { execSync } from 'child_process'
+import { str } from '../core/strings.js'
 
-// Generic legacy types (kept for backward-compat)
-type LegacyAgentType = 'general-purpose' | 'explore' | 'plan' | 'code-reviewer'
+// ── Call chain tracking (AgentOS §6 pattern) ─────────────────────────────────
 
-type AgentType = RedTeamAgentType | LegacyAgentType
+let _callDepth = 0
+const MAX_CALL_DEPTH = 5
 
-const READ_ONLY_TYPES = new Set<AgentType>(['explore', 'plan', 'code-reviewer'])
+/** Get current call depth (for external reporting) */
+export function getCallDepth(): number {
+  return _callDepth
+}
 
-const RED_TEAM_TYPES = new Set<AgentType>([
-  // 侦察（并行）
-  'recon', 'dns-recon', 'port-scan', 'web-probe', 'osint',
-  // 漏洞检索
-  'weapon-match',
-  // 漏洞探测（开局就扫）
-  'vuln-scan', 'web-vuln', 'service-vuln', 'auth-attack',
-  // 漏洞利用（手动+工具，两个并行）
-  'manual-exploit', 'tool-exploit',
-  // C2（与漏洞利用同时）
-  'c2-deploy',
-  // 靶机（信息收集+提权）
-  'target-recon', 'privesc',
-  // 内网横移
-  'tunnel', 'internal-recon', 'lateral',
-  // Flag收集
-  'flag-hunter',
-  // 综合
-  'report',
-])
+// ── Verification gate (AgentOS §6 "No Tuple, No Merge") ─────────────────────
 
-// Injected at startup — avoids circular imports
+/** Default verification commands */
+const VERIFY_COMMANDS = [
+  'npx tsc --noEmit 2>&1',
+]
+
+/**
+ * Run verification commands and return results.
+ * Returns null if all pass, or a formatted failure summary.
+ */
+function runVerification(cwd: string): { passed: boolean; output: string } | null {
+  const results: string[] = []
+  let allPassed = true
+
+  for (const cmd of VERIFY_COMMANDS) {
+    try {
+      execSync(cmd, { cwd, encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] })
+      results.push(`✓ ${cmd.split(' ')[1] || cmd} — passed`)
+    } catch (err: unknown) {
+      allPassed = false
+      const e = err as { stdout?: string; stderr?: string; message?: string }
+      const output = (e.stdout ?? '') + (e.stderr ?? '')
+      const trimmed = output.trim().slice(0, 800)
+      results.push(`✗ ${cmd.split(' ')[1] || cmd} — FAILED\n${trimmed}`)
+    }
+  }
+
+  if (results.length === 0) return null
+  return { passed: allPassed, output: results.join('\n\n') }
+}
+
+// ── Engine factory injection ─────────────────────────────────────────────────
+
 type ChildEngine = {
   runTurn: (msg: string, history: never[]) => Promise<{ result: { output: string; reason: string } }>
   abort: () => void
@@ -59,11 +78,6 @@ function normalizeDelegatedPrompt(prompt: string, config: EngineConfig): string 
     normalized = normalized
       .replace(/\bSESSION_DIR\b/g, config.sessionDir)
       .replace(/\/SESSION\b/g, config.sessionDir)
-  }
-  if (config.primaryTarget) {
-    normalized = normalized
-      .replace(/\bTARGET\b/g, config.primaryTarget)
-      .replace(/\{\{TARGET\}\}/g, config.primaryTarget)
   }
   return normalized
 }
@@ -92,98 +106,71 @@ export function registerAgentFactory(
   _currentRenderer = renderer
 }
 
-/**
- * Reset the factory registration — useful for testing to avoid state leakage
- * between test runs. Not intended for production use.
- */
 export function resetAgentFactory(): void {
   _engineFactory = null
   _currentConfig = null
   _currentRenderer = null
+  _callDepth = 0
 }
 
-/**
- * Check if the factory has been registered. Useful for tests and debugging.
- */
 export function isFactoryRegistered(): boolean {
   return _engineFactory !== null
 }
 
-/**
- * Shared runner used by both AgentTool and MultiAgentTool.
- * Returns a ToolResult with prefixed agent type.
- *
- * When running inside a tmux 4-pane layout, acquires a pane slot and creates
- * a file-backed renderer so the sub-agent's detailed output streams to its
- * dedicated pane.  The main renderer still shows high-level agentStart/Done markers.
- */
-export async function runAgentTask(
+// ── runAgentTask ─────────────────────────────────────────────────────────────
+
+async function runAgentTask(
   description: string,
   prompt: string,
-  agentType: AgentType,
-  maxIterations: number,
+  agentConfig: AgentConfig,
+  agentLabel: string,
+  verify: boolean,
   context: ToolContext,
 ): Promise<ToolResult> {
   if (!_engineFactory || !_currentConfig || !_currentRenderer) {
     return { content: 'Error: AgentTool 未初始化', isError: true }
   }
 
-  // Main renderer: shows high-level agentStart/Done markers + brief summaries on main pane
+  // Call chain depth check (prevent infinite recursion)
+  _callDepth++
+  if (_callDepth > MAX_CALL_DEPTH) {
+    _callDepth--
+    return {
+      content: `Max agent call depth (${MAX_CALL_DEPTH}) exceeded — possible recursion. Call chain: ${_callDepth} levels deep.`,
+      isError: true,
+    }
+  }
+
   const mainRenderer = _currentRenderer as {
     agentStart:     (desc: string, type: string) => void
     agentDone:      (desc: string, success: boolean) => void
     agentSummary:   (agentType: string, desc: string, summary: string) => void
     agentHeartbeat: (agentType: string, desc: string, elapsedSec: number) => void
   }
-  mainRenderer.agentStart(description, agentType)
+  mainRenderer.agentStart(description, agentLabel)
   const agentStartTime = Date.now()
 
-  // Write agent spawn event via event log
-  context.eventLog?.append('agent_spawn', agentType, { description }, [agentType])
+  // Structured communication event: INVOKE_SENT (with call depth)
+  context.eventLog?.append('invoke_sent', agentLabel, {
+    description,
+    modules: agentConfig.modules ? Object.keys(agentConfig.modules) : [],
+    planMode: agentConfig.identity.planMode ?? false,
+    maxIterations: agentConfig.maxIterations,
+    call_depth: _callDepth,
+    verify_enabled: verify,
+  }, [agentLabel, 'invoke'])
 
-  // ── Dynamic iteration extension ──
-  // Scanning / lateral / recon agents launch long-running background tools
-  // (nuclei / nmap / hydra / proxychains nmap) and then poll for results.
-  // Each poll cycle consumes LLM iterations.  Without extra headroom the agent
-  // exits before background scans finish, losing results.
-  //
-  // Rule: if the agent type is known to run background scans, add a buffer.
-  // The buffer is applied on top of the caller-provided maxIterations.
-  const BACKGROUND_SCAN_TYPES = new Set<AgentType>([
-    'vuln-scan', 'web-vuln', 'service-vuln', 'auth-attack',
-    'recon', 'port-scan', 'dns-recon', 'web-probe',
-    'lateral', 'internal-recon', 'tunnel',
-    'privesc', 'target-recon', 'flag-hunter',
-  ])
-
-  const ITERATION_BUFFER = BACKGROUND_SCAN_TYPES.has(agentType) ? 100 : 0
-  const effectiveMaxIterations = maxIterations + ITERATION_BUFFER
-
-  // Attempt to acquire a tmux pane slot for detailed output
-  const agentLabel = `[${agentType}] ${description}`
-  const paneSlot = tmuxLayout.acquireSlot(agentLabel)
-
-  // Child renderer: file-backed if a pane slot is available, else share main renderer
+  const paneLabel = `[${agentLabel}] ${description}`
+  const paneSlot = tmuxLayout.acquireSlot(paneLabel)
   const childRenderer = paneSlot
     ? Renderer.forFile(paneSlot.logFile)
     : (_currentRenderer as Renderer)
 
-  let systemPrompt: string
-  if (RED_TEAM_TYPES.has(agentType)) {
-    const basePrompt = getRedTeamAgentPrompt(agentType as RedTeamAgentType, context.cwd)
-    const sessionDir = _currentConfig.sessionDir
-    systemPrompt = sessionDir ? basePrompt + `\n\n当前 Session 目录: ${sessionDir}` : basePrompt
-  } else {
-    systemPrompt = getAgentTypeSystemPrompt(agentType as LegacyAgentType, context.cwd)
-  }
-
   const childConfig: EngineConfig = {
     ..._currentConfig,
-    maxIterations: effectiveMaxIterations,
+    agent: agentConfig,
     cwd: context.cwd,
     hookRunner: undefined,
-    planMode: READ_ONLY_TYPES.has(agentType),
-    systemPrompt,
     sessionDir: undefined,
   }
 
@@ -192,8 +179,8 @@ export async function runAgentTask(
   const normalizedPrompt = normalizeDelegatedPrompt(prompt, _currentConfig)
   const placeholdersReplaced = normalizedPrompt !== prompt
   const inheritedContextLines = [
-    `- primary_target: ${_currentConfig.primaryTarget ?? '未设置'}`,
     `- session_dir: ${_currentConfig.sessionDir ?? '未设置'}`,
+    `- call_depth: ${_callDepth}`,
   ]
 
   const sessionDirHint = _currentConfig.sessionDir
@@ -201,10 +188,10 @@ export async function runAgentTask(
     : ''
   const delegatedPrompt = [
     '[任务委派契约]',
-    '- 严格执行下方“子任务指令”，不得擅自替换目标或阶段。',
+    '- 严格执行下方"子任务指令"，不得擅自替换任务目标或范围。',
     '- 若用户/主agent给了明确范围与约束，以该指令为最高优先级。',
-    '- 若信息缺失导致无法执行（例如没有目标），先报告缺失并请求补充，不要自行假设。',
-    '- 如果子任务中仍出现占位符（TARGET/SESSION_DIR），优先使用下面“继承上下文”中的值。',
+    '- 若信息缺失导致无法执行，先报告缺失并请求补充，不要自行假设。',
+    '- 如果子任务中仍出现占位符（SESSION_DIR），优先使用下面"继承上下文"中的值。',
     sessionDirHint,
     '',
     '[继承上下文]',
@@ -219,32 +206,29 @@ export async function runAgentTask(
 
   appendAgentEvent(_currentConfig, {
     event: 'delegation.start',
-    agent_type: agentType,
+    agent_label: agentLabel,
     description,
-    max_iterations: effectiveMaxIterations,
-    iteration_buffer: ITERATION_BUFFER,
+    max_iterations: agentConfig.maxIterations,
+    call_depth: _callDepth,
+    verify_enabled: verify,
     placeholders_replaced: placeholdersReplaced,
     prompt_preview: normalizedPrompt.slice(0, 500),
   })
 
-  // Propagate parent abort signal to child engine so Ctrl+C cancels sub-agents too
   if (context.signal) {
     if (context.signal.aborted) {
+      _callDepth--
       mainRenderer.agentDone(description, false)
       if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
-      return { content: `[${agentType}] 已取消（父任务中止）`, isError: true }
+      return { content: `[${agentLabel}] 已取消（父任务中止）`, isError: true }
     }
     context.signal.addEventListener('abort', () => childEngine.abort(), { once: true })
   }
 
-  // Heartbeat: every 2 minutes, report elapsed time in main terminal.
-  // Sub-agents are expected to start background scans and return quickly.
-  // If a heartbeat fires, the agent is still doing foreground work (LLM reasoning,
-  // WeaponRadar lookups, etc.) — not necessarily hung.
   const HEARTBEAT_MS = 2 * 60 * 1000
   const heartbeatTimer = setInterval(() => {
     const elapsedSec = Math.round((Date.now() - agentStartTime) / 1000)
-    mainRenderer.agentHeartbeat(agentType, description, elapsedSec)
+    mainRenderer.agentHeartbeat(agentLabel, description, elapsedSec)
   }, HEARTBEAT_MS)
 
   try {
@@ -254,29 +238,40 @@ export async function runAgentTask(
 
     mainRenderer.agentDone(description, result.reason !== 'error')
     if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
-    context.eventLog?.append('agent_complete', agentType, {
+
+    // ── Verification Gate (AgentOS "No Tuple, No Merge") ──
+    let verifySection = ''
+    if (verify && result.reason !== 'error' && !agentConfig.identity.planMode) {
+      const verifyResult = runVerification(context.cwd)
+      if (verifyResult) {
+        const icon = verifyResult.passed ? '✓' : '✗'
+        verifySection = `\n\n---\n[验证闸门] ${icon}\n${verifyResult.output}`
+        context.eventLog?.append('invoke_completed', agentLabel, {
+          description,
+          verified: true,
+          verification_passed: verifyResult.passed,
+        }, [agentLabel, 'verify', verifyResult.passed ? 'passed' : 'failed'])
+      }
+    }
+
+    context.eventLog?.append('invoke_completed', agentLabel, {
       description,
       success: result.reason !== 'error',
       reason: result.reason,
       duration_ms: durationMs,
-    }, [agentType, result.reason !== 'error' ? 'success' : 'error'])
-    appendAgentEvent(_currentConfig, {
-      event: 'delegation.done',
-      agent_type: agentType,
-      description,
-      success: result.reason !== 'error',
-      reason: result.reason,
-      duration_ms: durationMs,
-    })
+      call_depth: _callDepth,
+      output_preview: result.output.slice(0, 500),
+    }, [agentLabel, 'invoke', result.reason !== 'error' ? 'success' : 'error'])
+
+    _callDepth--
 
     if (!result.output) {
       return {
-        content: `[${agentType}] "${description}" 完成（${result.reason}），无文本输出。`,
+        content: `[${agentLabel}] "${description}" 完成（${result.reason}），无文本输出。${verifySection}`,
         isError: false,
       }
     }
 
-    // Show a brief summary in main terminal (first 8 non-empty lines of output)
     const summaryLines = result.output
       .split('\n')
       .map((l: string) => l.trimEnd())
@@ -284,77 +279,34 @@ export async function runAgentTask(
       .slice(0, 8)
       .join('\n')
     if (summaryLines) {
-      mainRenderer.agentSummary(agentType, description, summaryLines)
+      mainRenderer.agentSummary(agentLabel, description, summaryLines)
     }
 
     return {
-      content: `[${agentType}] "${description}":\n\n${result.output}`,
+      content: `[${agentLabel}] "${description}":\n\n${result.output}${verifySection}`,
       isError: false,
     }
   } catch (err: unknown) {
     clearInterval(heartbeatTimer)
+    _callDepth--
     mainRenderer.agentDone(description, false)
     if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
     appendAgentEvent(_currentConfig, {
       event: 'delegation.error',
-      agent_type: agentType,
+      agent_label: agentLabel,
       description,
       success: false,
       duration_ms: Date.now() - agentStartTime,
       error: (err as Error).message,
     })
     return {
-      content: `[${agentType}] "${description}" 异常: ${(err as Error).message}`,
+      content: `[${agentLabel}] "${description}" 异常: ${(err as Error).message}`,
       isError: true,
     }
   }
 }
 
-// Default max_iterations per agent type.
-//
-// Background-scan agents (vuln-scan / web-vuln / service-vuln / lateral)
-// now get higher limits because they launch long-running tools (nuclei / nmap /
-// hydra) in the background and then poll for results — that polling consumes
-// LLM iterations.  Without headroom the agent exits before scans finish and
-// the main agent loses the results.
-//
-// Rule of thumb: background-scan agents need ~(scan_minutes / 2) extra turns.
-// A 30-minute nuclei run polled every 3 turns = ~10 extra turns → add 40 buffer.
-export const DEFAULT_ITERATIONS: Record<string, number> = {
-  // 侦察（并行）
-  'recon':            100,   // was 80 — launches dns+port+web+osint in background
-  'dns-recon':         80,
-  'port-scan':         80,
-  'web-probe':         80,
-  'osint':             60,
-  // 漏洞检索
-  'weapon-match':      60,
-  // 漏洞探测 — increased: long nuclei/hydra runs need polling headroom
-  'vuln-scan':        200,   // was 120 — orchestrates 3 sub-scan agents + polls
-  'web-vuln':         180,   // was 120 — nuclei full-template scans are 30-60 min
-  'service-vuln':     150,   // was 100
-  'auth-attack':      150,   // was 100 — hydra dict attacks can run 20+ min
-  // 漏洞利用
-  'manual-exploit':   120,   // was 100
-  'tool-exploit':     120,   // was 100
-  // C2
-  'c2-deploy':         80,
-  // 靶机
-  'target-recon':      80,
-  'privesc':          120,   // was 100 — linpeas + manual enum
-  // 内网横移 — increased: tunnel setup + internal nmap can be slow
-  'tunnel':           100,   // was 80
-  'internal-recon':   150,   // was 100
-  'lateral':          180,   // was 120 — full internal attack chain
-  // Flag收集
-  'flag-hunter':       80,
-  // 综合
-  'report':            60,
-  'general-purpose':   60,
-  'explore':           40,
-  'plan':              30,
-  'code-reviewer':     30,
-}
+// ── AgentTool ────────────────────────────────────────────────────────────────
 
 export class AgentTool implements Tool {
   name = 'Agent'
@@ -365,89 +317,29 @@ export class AgentTool implements Tool {
       name: 'Agent',
       description: `启动专用 sub-agent 执行聚焦任务。多个 Agent 调用在同一响应中并发执行（Promise.all）。
 
-## 红队 Agent 类型
+## 指定 Agent 配置
 
-### 一级 Agent（直接派给主agent）
-| 类型 | 职责 | 场景 |
-|------|------|------|
-| recon | 侦察总管（内部再分 dns-recon/port-scan/web-probe/osint） | 开局 Phase 1 |
-| vuln-scan | 漏洞探测总管（内部再分 web-vuln/service-vuln/auth-attack） | 开局 Phase 1 同时启动 |
-| weapon-match | POC库检索（基于侦察结果匹配漏洞） | Phase 2 |
-| manual-exploit | 手动漏洞利用（curl/python手工payload） | Phase 3 |
-| tool-exploit | 工具漏洞利用（MSF/sqlmap/searchsploit） | Phase 3 |
-| c2-deploy | C2部署（Metasploit/Sliver监听+payload生成） | Phase 3 同时启动 |
-| target-recon | 靶机信息收集（本机+内网情报） | Phase 4 拿到shell后 |
-| privesc | 权限提升（SUID/sudo/内核/计划任务） | Phase 4 |
-| tunnel | 内网穿透（chisel socks5代理） | Phase 5 |
-| internal-recon | 内网资产发现（proxychains+nmap/httpx） | Phase 5 |
-| lateral | 横向移动（MS17-010/PTH/凭证复用） | Phase 5 |
-| flag-hunter | 全面搜索并收集flag（ShellSession/C2/webshell） | 随时 |
-| report | 生成最终渗透测试报告 | Phase 7 |
+方式 1 — 预设名称: subagent_type: "explore" | "plan" | "code-reviewer" | "general-purpose"
+方式 2 — 自定义配置: agent_config: { identity, modules, tools, maxIterations }
 
-### 二级 Agent（由 recon/vuln-scan 内部调用，也可直接使用）
-| 类型 | 职责 |
-|------|------|
-| dns-recon | 子域名/DNS枚举（subfinder/dnsx/amass） |
-| port-scan | 端口/服务扫描（nmap两步/masscan） |
-| web-probe | Web资产探测（httpx/katana/gau/指纹） |
-| osint | OSINT情报（WebSearch/证书/GitHub dork） |
-| web-vuln | Web漏洞扫描（nuclei HTTP/ffuf） |
-| service-vuln | 服务层漏洞（nmap-vuln/enum4linux） |
-| auth-attack | 认证攻击（hydra/kerbrute/默认凭证） |
+## 验证闸门
 
-### 通用类型（仅子agent内部或兼容模式）
-- general-purpose: 所有工具可用，复杂自定义任务（主agent协调者模式下禁止使用）
-
-## 标准开局（主agent）
-  MultiAgent([recon, vuln-scan])   ← 一次调用并行启动
-  → 侦察和漏洞扫描同步进行，最大化时间利用
+设置 verify: true 后，子 agent 完成代码修改会自动运行 tsc --noEmit 验证类型安全。
+验证失败时结果中包含错误详情，便于主 agent 立即修复。
 
 ## 关键规则
-- prompt 必须完全自包含（target、session_dir、具体任务、上游发现）
-- 叶子 agent 不能再调用 Agent（只有 recon/vuln-scan 这类编排型 agent 可以）
-- 每个 agent 写文件到 session_dir，结束时返回摘要`,
+- prompt 必须完全自包含
+- Sub-agent 不能再调用 Agent（禁止递归，最大调用深度 5 层）
+- 无依赖的多个子任务可并发执行`,
       parameters: {
         type: 'object',
         properties: {
-          description: {
-            type: 'string',
-            description: '任务标签（显示在UI，如 "侦察 zhhovo.top"）',
-          },
-          prompt: {
-            type: 'string',
-            description: `完整任务指令，必须自包含，包含：
-1. 目标（target URL/IP/域名）
-2. session_dir（输出目录绝对路径）
-3. 具体任务（做什么、输出什么文件）
-4. 上下文（前一阶段的关键发现）
-
-Sub-agent 没有父对话上下文，所有信息必须在 prompt 中提供。`,
-          },
-          subagent_type: {
-            type: 'string',
-            enum: [
-              // 一级 agent（直接派给主agent）
-              'recon', 'vuln-scan', 'weapon-match',
-              'manual-exploit', 'tool-exploit', 'c2-deploy',
-              'target-recon', 'privesc',
-              'tunnel', 'internal-recon', 'lateral',
-              'flag-hunter', 'report',
-              // 二级 agent（也可直接使用）
-              'dns-recon', 'port-scan', 'web-probe', 'osint',
-              'web-vuln', 'service-vuln', 'auth-attack',
-              // 通用
-              'general-purpose', 'explore', 'plan', 'code-reviewer',
-            ],
-            description: 'Agent 类型（默认 general-purpose）',
-          },
-          max_iterations: {
-            type: 'number',
-            description: '最大执行轮数（各类型有合理默认值，可覆盖，最大 200）',
-          },
-          serial_reason: {
-            type: 'string',
-            description: '仅在必须串行时填写依赖原因（例如“必须等待阶段N输出后才能执行”）',
-          },
+          description: { type: 'string', description: '任务标签' },
+          prompt: { type: 'string', description: '完整任务指令（必须自包含）' },
+          subagent_type: { type: 'string', enum: PRESET_NAMES, description: '预设名称（默认 general-purpose）' },
+          agent_config: { type: 'object', description: '自定义配置（覆盖 subagent_type）' },
+          max_iterations: { type: 'number', description: '最大执行轮数（覆盖预设默认值）' },
+          verify: { type: 'boolean', description: '验证闸门：完成后自动跑 tsc --noEmit 检查类型安全（默认 false）' },
         },
         required: ['description', 'prompt'],
       },
@@ -455,13 +347,9 @@ Sub-agent 没有父对话上下文，所有信息必须在 prompt 中提供。`,
   }
 
   async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    const description   = String(input.description ?? 'subtask')
-    const prompt        = String(input.prompt ?? '')
-    const agentType     = String(input.subagent_type ?? 'general-purpose') as AgentType
-    const defaultIter   = DEFAULT_ITERATIONS[agentType] ?? 30
-    const maxIterations = typeof input.max_iterations === 'number'
-      ? Math.min(input.max_iterations, 200)
-      : defaultIter
+    const description = str(input.description, 'subtask')
+    const prompt      = str(input.prompt, '')
+    const verify      = input.verify === true
 
     if (!prompt.trim()) {
       return { content: 'Error: prompt 不能为空', isError: true }
@@ -471,6 +359,18 @@ Sub-agent 没有父对话上下文，所有信息必须在 prompt 中提供。`,
       return { content: 'Error: AgentTool 未初始化，请先调用 registerAgentFactory。', isError: true }
     }
 
-    return runAgentTask(description, prompt, agentType, maxIterations, context)
+    const presetName = str(input.subagent_type, '') || undefined
+    const customConfig = input.agent_config as AgentConfig | undefined
+    const agentConfig = resolveAgentConfig({
+      preset: customConfig ? undefined : presetName,
+      config: customConfig,
+    })
+    const agentLabel = customConfig ? 'custom' : (presetName ?? 'general-purpose')
+
+    if (typeof input.max_iterations === 'number') {
+      agentConfig.maxIterations = Math.min(input.max_iterations, 200)
+    }
+
+    return runAgentTask(description, prompt, agentConfig, agentLabel, verify, context)
   }
 }

@@ -8,7 +8,7 @@
  *   - 各窗口实时 tail -f 子 agent 的日志文件，颜色/格式完整保留
  *
  * 布局示意（tmux 会话内）：
- *   [0: OVOGO-Status] [1: dns-recon] [2: port-scan] [3: web-vuln] ...
+ *   [0: OVOGO-Status] [1: explore] [2: plan] [3: code-reviewer] ...
  *
  * 降级：tmux 不可用或初始化失败时，子 agent 输出回落到主 stdout renderer
  */
@@ -30,7 +30,7 @@ function sq(s: string): string {
 function toWindowName(label: string): string {
   return label
     .replace(/^\[([^\]]+)\]\s*/, '$1-')   // [dns-recon] xxx → dns-recon-xxx
-    .replace(/[^a-zA-Z0-9_\-]/g, '-')
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/, '')
     .slice(0, 20)

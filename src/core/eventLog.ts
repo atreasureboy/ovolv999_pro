@@ -1,5 +1,5 @@
 /**
- * EventLog — 不可变事件流，记录渗透测试的完整审计轨迹
+ * EventLog — 不可变事件流，记录任务的完整审计轨迹
  *
  * 每条事件为 NDJSON 格式，追加写入 session 目录下的 events.ndjson。
  * 支持按类型/标签查询，供 critic 检查、上下文压缩、agent 回调等系统使用。
@@ -7,20 +7,19 @@
 
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 
 export type EventType =
   | 'tool_call'
   | 'tool_result'
-  | 'agent_spawn'
-  | 'agent_complete'
+  | 'boot_context'
+  | 'invoke_sent'
+  | 'invoke_completed'
   | 'memory_write'
-  | 'memory_read'
   | 'context_compact'
-  | 'critic_flag'
+  | 'module_flag'
   | 'user_input'
   | 'user_interrupt'
-  | 'dispatch_start'
-  | 'dispatch_complete'
 
 export interface EventLogEntry {
   id: string
@@ -31,10 +30,8 @@ export interface EventLogEntry {
   tags?: string[]
 }
 
-let _counter = 0
 function nextId(): string {
-  _counter++
-  return `evt_${Date.now()}_${_counter}`
+  return `evt_${randomUUID()}`
 }
 
 export class EventLog {

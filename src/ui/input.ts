@@ -49,33 +49,8 @@ export class InputHandler {
     })
   }
 
-  /**
-   * Read a line with a styled prompt prefix.
-   * The prefix is rendered outside readline so we control its colors.
-   */
-  async readLineStyled(prefix: string): Promise<InputResult> {
-    return new Promise((resolve) => {
-      this.rl.once('close', () => {
-        resolve({ text: '', eof: true })
-      })
-
-      // Render the styled prefix, then let readline capture input after it
-      process.stdout.write(prefix)
-      this.rl.question('', (answer) => {
-        if (answer.trim()) {
-          this.history.unshift(answer)
-        }
-        resolve({ text: answer, eof: false })
-      })
-    })
-  }
-
   close(): void {
     this.rl.close()
-  }
-
-  getHistory(): string[] {
-    return [...this.history]
   }
 }
 
@@ -86,9 +61,14 @@ export async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return ''
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const done = () => {
+      if (timer) clearTimeout(timer)
+      resolve(Buffer.concat(chunks).toString('utf8').trim())
+    }
     process.stdin.on('data', (chunk: Buffer) => chunks.push(chunk))
-    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8').trim()))
-    process.stdin.on('error', () => resolve(''))
-    setTimeout(() => resolve(chunks.map(c => c.toString()).join('').trim()), 3000)
+    process.stdin.on('end', done)
+    process.stdin.on('error', done)
+    timer = setTimeout(done, 10_000) // 10s generous timeout for slow pipes
   })
 }

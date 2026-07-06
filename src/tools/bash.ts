@@ -10,12 +10,16 @@
 import { exec, spawn } from 'child_process'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { BASH_DESCRIPTION } from '../prompts/tools.js'
-import { mkdirSync, existsSync } from 'fs'
+import { mkdirSync } from 'fs'
 import { join } from 'path'
 
 const MAX_OUTPUT_LENGTH = 30_000
-const DEFAULT_TIMEOUT_MS = 1_800_000  // 30 min — 全量扫描默认值（nuclei/nmap 全端口等）
-const MAX_TIMEOUT_MS = 14_400_000    // 4 h — nuclei/hydra 等长时间扫描
+const DEFAULT_TIMEOUT_MS = 1_800_000  // 30 min — long-running commands default
+const MAX_TIMEOUT_MS = 14_400_000    // 4 h — max for very long tasks
+
+// Shell detection — OVOGO_SHELL env overrides; otherwise bash (resolves via PATH
+// on Windows if Git Bash/WSL is installed, /bin/bash on Unix).
+const SHELL = process.env.OVOGO_SHELL || 'bash'
 
 export interface BashInput {
   command: string
@@ -50,7 +54,7 @@ export class BashTool implements Tool {
           },
           timeout: {
             type: 'number',
-            description: `Timeout in milliseconds. Default: ${DEFAULT_TIMEOUT_MS} (30 min). Max: ${MAX_TIMEOUT_MS} (4 h). For nuclei/nmap/hydra full scans, prefer run_in_background:true instead of raising timeout.`,
+            description: `Timeout in milliseconds. Default: ${DEFAULT_TIMEOUT_MS} (30 min). Max: ${MAX_TIMEOUT_MS} (4 h). For long-running commands, prefer run_in_background:true instead of raising timeout.`,
           },
           run_in_background: {
             type: 'boolean',
@@ -84,8 +88,6 @@ export class BashTool implements Tool {
 
     // ── Background mode (fire-and-forget with auto log redirect) ─────────────
     if (run_in_background) {
-      const { spawn } = await import('child_process')
-
       // Auto-redirect stdout/stderr to a session-scoped log file so output
       // is never lost even if the caller forgets to add `> file 2>&1`.
       const bgLogDir = context.sessionDir ? join(context.sessionDir, '.bg_logs') : join(context.cwd, '.bg_logs')
@@ -99,7 +101,7 @@ export class BashTool implements Tool {
       const alreadyRedirected = command.includes('>') || command.includes('2>&1') || command.includes('/dev/null')
       const actualCommand = alreadyRedirected ? command : `${command} >> "${logFile}" 2>&1`
 
-      const child = spawn('bash', ['-c', actualCommand], {
+      const child = spawn(SHELL, ['-c', actualCommand], {
         detached: true,
         stdio: 'ignore',
         cwd: context.cwd,
@@ -173,7 +175,7 @@ export class BashTool implements Tool {
           timeout: timeoutMs,
           maxBuffer: 50 * 1024 * 1024,
           env: { ...process.env, TERM: 'dumb' },
-          shell: '/bin/bash',
+          shell: SHELL,
         },
         (err, stdout, stderr) => {
           // Remove the abort listener to prevent it firing after process ends

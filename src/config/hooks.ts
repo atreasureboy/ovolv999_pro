@@ -10,7 +10,7 @@
 
 import { execSync } from 'child_process'
 import type { HooksConfig, HookEntry } from './settings.js'
-import type { IHookRunner } from '../core/types.js'
+import type { IHookRunner, TurnResult } from '../core/types.js'
 
 function matchesHook(entry: HookEntry, toolName: string): boolean {
   if (!entry.matcher) return true
@@ -68,6 +68,34 @@ export class HookRunner implements IHookRunner {
       })
     }
   }
+
+  runOnError(error: Error, context: { turnNumber: number; lastToolName?: string }): void {
+    for (const entry of this.hooks.OnError ?? []) {
+      runCommand(entry.command, {
+        OVOGO_ERROR_MESSAGE: error.message.slice(0, 4096),
+        OVOGO_TURN_NUMBER: String(context.turnNumber),
+        OVOGO_LAST_TOOL: context.lastToolName ?? '',
+      })
+    }
+  }
+
+  runOnComplete(result: TurnResult): void {
+    for (const entry of this.hooks.OnComplete ?? []) {
+      runCommand(entry.command, {
+        OVOGO_RUN_REASON: result.reason,
+        OVOGO_RUN_OUTPUT: result.output.slice(0, 4096),
+      })
+    }
+  }
+
+  runOnContextOverflow(tokensBefore: number, tokensAfter: number): void {
+    for (const entry of this.hooks.OnContextOverflow ?? []) {
+      runCommand(entry.command, {
+        OVOGO_TOKENS_BEFORE: String(tokensBefore),
+        OVOGO_TOKENS_AFTER: String(tokensAfter),
+      })
+    }
+  }
 }
 
 /** A no-op runner used when no hooks are configured */
@@ -75,4 +103,7 @@ export class NoopHookRunner implements IHookRunner {
   runPreToolCall(): void {}
   runPostToolCall(): void {}
   runUserPromptSubmit(): void {}
+  runOnError(): void {}
+  runOnComplete(): void {}
+  runOnContextOverflow(): void {}
 }

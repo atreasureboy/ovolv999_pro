@@ -28,6 +28,7 @@
 
 import { resolve, join } from 'path'
 import { writeFileSync, mkdirSync } from 'fs'
+import { homedir } from 'os'
 import { ExecutionEngine } from '../src/core/engine.js'
 import { Renderer } from '../src/ui/renderer.js'
 import { InputHandler, readStdin } from '../src/ui/input.js'
@@ -35,15 +36,20 @@ import type { EngineConfig, OpenAIMessage } from '../src/core/types.js'
 import { registerAgentFactory } from '../src/tools/agent.js'
 import { loadSettings } from '../src/config/settings.js'
 import { HookRunner, NoopHookRunner } from '../src/config/hooks.js'
-import { loadSkills, expandSkillPrompt } from '../src/skills/loader.js'
+import { loadSkills, expandSkillPrompt, formatSkillIndex } from '../src/skills/loader.js'
 import type { Skill } from '../src/skills/loader.js'
 import { loadOvogoMd } from '../src/config/ovogomd.js'
-import { getMemoryDir, buildMemorySystemSection, getMemoryStats } from '../src/memory/index.js'
+import { getMemoryDir, getMemoryStats } from '../src/memory/index.js'
 import { buildFullSystemPrompt } from '../src/prompts/system.js'
 import { EventLog } from '../src/core/eventLog.js'
 import { SemanticMemory } from '../src/core/semanticMemory.js'
 import { EpisodicMemory } from '../src/core/episodicMemory.js'
-import { ContextBudgetManager } from '../src/core/contextBudget.js'
+import { globalModuleRegistry } from '../src/core/moduleRegistry.js'
+import { MemoryModule } from '../src/modules/memory.js'
+import { CriticModule } from '../src/modules/critic.js'
+import { WorkspaceModule } from '../src/modules/workspace.js'
+import { ReflectionModule, consolidateSession } from '../src/modules/reflection.js'
+import { createLoadSkillTool } from '../src/tools/loadSkill.js'
 import { tmuxLayout } from '../src/ui/tmuxLayout.js'
 
 const VERSION = '0.1.0'
@@ -148,10 +154,10 @@ TOOLS
   TodoWrite     Task checklist management
   WebFetch      Fetch URL content as plain text
   WebSearch     Search the web
-  Agent         Spawn a sub-agent (explore/plan/code-reviewer/general-purpose)
-  C2            C2 framework interface (Sliver/Metasploit)
-  EnvAnalyzer   WAF/EDR/sandbox detection
-  TechniqueGenerator  Binary weaponization with evasion techniques
+  Agent         Spawn a sub-agent (preset or custom AgentConfig)
+  load_skill    Lazily load a skill's full prompt
+  TmuxSession   Manage local interactive processes (tmux)
+  ShellSession  Manage inbound persistent shell sessions
 
 REPL COMMANDS
   /plan <task>   Run task in plan mode (read-only analysis + confirm before execute)
@@ -168,15 +174,18 @@ SKILLS (${skills.size} available)
 ${[...skills.values()].map(s => `  /${s.name.padEnd(14)} ${s.description}`).join('\n')}
 
 HOOKS (configure in .ovogo/settings.json)
-  PreToolCall      Runs before each tool call  (env: OVOGO_TOOL_NAME, OVOGO_TOOL_INPUT)
-  PostToolCall     Runs after each tool call   (env: OVOGO_TOOL_NAME, OVOGO_TOOL_RESULT, OVOGO_TOOL_IS_ERROR)
-  UserPromptSubmit Runs when user submits input (env: OVOGO_PROMPT)
+  PreToolCall       Runs before each tool call   (env: OVOGO_TOOL_NAME, OVOGO_TOOL_INPUT)
+  PostToolCall      Runs after each tool call    (env: OVOGO_TOOL_NAME, OVOGO_TOOL_RESULT, OVOGO_TOOL_IS_ERROR)
+  UserPromptSubmit  Runs when user submits input (env: OVOGO_PROMPT)
+  OnError           Runs on unrecoverable error  (env: OVOGO_ERROR_MESSAGE, OVOGO_TURN_NUMBER)
+  OnComplete        Runs when a turn completes   (env: OVOGO_RUN_REASON, OVOGO_RUN_OUTPUT)
+  OnContextOverflow Runs after context compaction (env: OVOGO_TOKENS_BEFORE, OVOGO_TOKENS_AFTER)
 
 EXAMPLES
   ovogogogo
-  ovogogogo "compile evasion payload for target"
-  ovogogogo -m gpt-4o --cwd /my/project "generate AMSI bypass payload"
-  echo "compile payload" | ovogogogo
+  ovogogogo "fix the type errors in src/core"
+  ovogogogo -m gpt-4o --cwd /my/project "add unit tests for engine.ts"
+  echo "refactor the tool registry" | ovogogogo
 `)
 }
 
@@ -184,20 +193,14 @@ EXAMPLES
 // Session directory — 按目标+时间戳隔离扫描输出
 // ─────────────────────────────────────────────────────────────
 
-function createSessionDir(cwd: string, primaryTarget?: string): string {
-  const targetSlug = (primaryTarget ?? 'session')
-    .replace(/^https?:\/\//, '')
-    .replace(/[^a-zA-Z0-9._-]/g, '_')
-    .replace(/_+/g, '_')
-    .slice(0, 64)
-
+function createSessionDir(cwd: string): string {
   const ts = new Date()
     .toISOString()
     .replace('T', '_')
     .replace(/:/g, '')
     .slice(0, 15)   // YYYYMMDD_HHMMSS
 
-  const dirName = `${targetSlug}_${ts}`
+  const dirName = `session_${ts}`
   const sessionDir = join(cwd, 'sessions', dirName)
   mkdirSync(sessionDir, { recursive: true })
   return sessionDir
@@ -283,14 +286,14 @@ async function runPlanMode(
 // Built-in REPL commands
 // ─────────────────────────────────────────────────────────────
 
-async function handleBuiltin(
+function handleBuiltin(
   cmd: string,
   history: OpenAIMessage[],
   engine: ExecutionEngine,
   renderer: Renderer,
   cwd: string,
   skills: Map<string, Skill>,
-): Promise<boolean | 'exit' | { skill: Skill; args: string }> {
+): boolean | 'exit' | { skill: Skill; args: string } {
   const parts = cmd.split(/\s+/)
   const command = parts[0]
   const rest = parts.slice(1).join(' ')
@@ -384,6 +387,7 @@ async function runRepl(
   cwd: string,
   skills: Map<string, Skill>,
   hookRunner: { runUserPromptSubmit: (p: string) => void },
+  consolidate?: { config: EngineConfig; semanticMemory: SemanticMemory; episodicMemory: EpisodicMemory },
 ): Promise<void> {
   const input = new InputHandler()
   const history: OpenAIMessage[] = []
@@ -515,7 +519,7 @@ async function runRepl(
 
     // ── Other /commands ───────────────────────────────────────
     if (trimmed.startsWith('/')) {
-      const result = await handleBuiltin(trimmed, history, engine, renderer, cwd, skills)
+      const result = handleBuiltin(trimmed, history, engine, renderer, cwd, skills)
 
       if (result === 'exit') {
         input.close()
@@ -546,6 +550,21 @@ async function runRepl(
 
     await runTask(trimmed, [...history], Date.now())
     updateProgressLog(cwd, 'idle', 'waiting for next task')
+  }
+
+  // Session consolidation (AgentOS §8 — close the learning loop)
+  if (consolidate) {
+    try {
+      const OpenAI = (await import('openai')).default
+      const client = new OpenAI({ apiKey: consolidate.config.apiKey, baseURL: consolidate.config.baseURL })
+      const result = await consolidateSession(
+        client, consolidate.config.model,
+        consolidate.episodicMemory, consolidate.semanticMemory,
+      )
+      if (result.knowledgeExtracted > 0) {
+        renderer.info(`Memory consolidated: ${result.knowledgeExtracted} entries from ${result.episodes} episodes`)
+      }
+    } catch { /* best-effort */ }
   }
 
   process.exit(0)
@@ -612,16 +631,10 @@ async function main(): Promise<void> {
     ? new HookRunner(settings.hooks)
     : new NoopHookRunner()
 
-  const hasHooks = Boolean(
-    settings.hooks?.PreToolCall?.length ||
-    settings.hooks?.PostToolCall?.length ||
-    settings.hooks?.UserPromptSubmit?.length,
-  )
+  const hookTypes = ['PreToolCall', 'PostToolCall', 'UserPromptSubmit', 'OnError', 'OnComplete', 'OnContextOverflow'] as const
+  const hasHooks = hookTypes.some(t => (settings.hooks?.[t]?.length ?? 0) > 0)
   if (hasHooks) {
-    const count =
-      (settings.hooks?.PreToolCall?.length ?? 0) +
-      (settings.hooks?.PostToolCall?.length ?? 0) +
-      (settings.hooks?.UserPromptSubmit?.length ?? 0)
+    const count = hookTypes.reduce((sum, t) => sum + (settings.hooks?.[t]?.length ?? 0), 0)
     renderer.info(`Hooks: ${count} hook(s) loaded from .ovogo/settings.json`)
   }
 
@@ -632,7 +645,7 @@ async function main(): Promise<void> {
   }
 
   // Load OVOGO.md files (project + user instructions)
-  const ovogoMdFiles = await loadOvogoMd(cwd)
+  const ovogoMdFiles = loadOvogoMd(cwd)
   if (ovogoMdFiles.length > 0) {
     const labels = ovogoMdFiles.map((f) => f.type).join(', ')
     renderer.info(`OVOGO.md: ${ovogoMdFiles.length} file(s) loaded (${labels})`)
@@ -647,18 +660,17 @@ async function main(): Promise<void> {
     renderer.info(`Memory: initialized — ${memoryDir}`)
   }
 
-  // Show engagement scope if configured
-  const engagement = settings.engagement
-  if (engagement) {
-    renderer.info(`Engagement: ${engagement.name ?? '未命名'} · 阶段: ${engagement.phase ?? '未设置'}`)
-    if (engagement.targets && engagement.targets.length > 0) {
-      renderer.info(`Targets: ${engagement.targets.join(', ')}`)
+  // Show task context if configured
+  const taskContext = settings.taskContext
+  if (taskContext) {
+    renderer.info(`Task: ${taskContext.name ?? '未命名'} · 阶段: ${taskContext.phase ?? '未设置'}`)
+    if (taskContext.scope && taskContext.scope.length > 0) {
+      renderer.info(`Scope: ${taskContext.scope.join(', ')}`)
     }
   }
 
   // Create per-session output directory
-  const primaryTarget = engagement?.targets?.[0]
-  const sessionDir = createSessionDir(cwd, primaryTarget)
+  const sessionDir = createSessionDir(cwd)
   renderer.info(`Session dir: ${sessionDir}`)
 
   // Initialize sub-agent tmux monitor
@@ -668,27 +680,32 @@ async function main(): Promise<void> {
     renderer.info(`Agent 监控: ${tmuxLayout.sessionHint()}`)
   }
 
-  // Build the full system prompt once
-  const memorySection = buildMemorySystemSection(memoryDir)
-  const systemPrompt = buildFullSystemPrompt(cwd, ovogoMdFiles, memorySection, engagement, sessionDir)
+  // Build the full system prompt once (memory section injected by MemoryModule at boot)
+  const skillIndex = formatSkillIndex(skills)
+  const systemPrompt = buildFullSystemPrompt(cwd, ovogoMdFiles, '', taskContext, sessionDir, skillIndex)
 
   // Initialize optimization components
   const eventLog = new EventLog(sessionDir)
   renderer.info(`EventLog: ${eventLog.getFilePath()}`)
 
   const projectSlug = cwd.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32)
-  const semanticMemory = new SemanticMemory(join(process.env.HOME ?? '', '.ovogo', 'projects', projectSlug))
-  const episodicMemory = new EpisodicMemory(join(process.env.HOME ?? '', '.ovogo', 'projects', projectSlug))
+  const semanticMemory = new SemanticMemory(join(homedir(), '.ovogo', 'projects', projectSlug))
+  const episodicMemory = new EpisodicMemory(join(homedir(), '.ovogo', 'projects', projectSlug))
+
+  // Register capability modules (factories read from EngineConfig at resolve time)
+  globalModuleRegistry.register('memory', (ctx) =>
+    new MemoryModule(ctx.config.semanticMemory!, ctx.config.episodicMemory!))
+  globalModuleRegistry.register('critic', (ctx) =>
+    new CriticModule(ctx.client, ctx.model, ctx.config.planMode ?? false))
+  globalModuleRegistry.register('workspace', (ctx) =>
+    new WorkspaceModule(ctx.config.sessionDir))
+  globalModuleRegistry.register('reflection', (ctx) =>
+    new ReflectionModule(ctx.client, ctx.model, ctx.config.semanticMemory!))
 
   const maxCtxTokens = 200_000 // claude-sonnet-4-x default
-  const contextBudget = new ContextBudgetManager({
-    maxTokens: maxCtxTokens,
-    systemPrompt: 5_000,
-    memory: 8_000,
-    history: 80_000,
-    toolResults: 60_000,
-    reserved: 8_192,
-  })
+
+  // Create load_skill tool bound to the loaded skills map
+  const loadSkillTool = createLoadSkillTool(skills)
 
   const config: EngineConfig = {
     model,
@@ -700,25 +717,26 @@ async function main(): Promise<void> {
     hookRunner,
     systemPrompt,
     sessionDir,
-    primaryTarget,
     maxContextTokens: maxCtxTokens,
     eventLog,
-    contextBudget,
     semanticMemory,
     episodicMemory,
+    extraTools: skills.size > 0 ? [loadSkillTool] : [],
+    enabledModules: ['memory', 'critic', 'workspace', 'reflection'],
   }
 
-  // Plan-mode config: same system prompt + planMode=true (engine filters write tools)
+  // Plan-mode config: read-only analysis, no reflection (plans aren't completed work)
   const planConfig: EngineConfig = {
     ...config,
     planMode: true,
+    enabledModules: ['memory', 'workspace'],
   }
 
   const engine = new ExecutionEngine(config, renderer)
 
   // Register agent factory so AgentTool can spawn child engines
   registerAgentFactory(
-    (childConfig, childRenderer) => new ExecutionEngine(childConfig as EngineConfig, childRenderer as Renderer),
+    (childConfig, childRenderer) => new ExecutionEngine(childConfig, childRenderer as Renderer),
     config,
     renderer,
   )
@@ -752,7 +770,9 @@ async function main(): Promise<void> {
   }
 
   // Interactive REPL
-  await runRepl(engine, planConfig, renderer, cwd, skills, hookRunner)
+  await runRepl(engine, planConfig, renderer, cwd, skills, hookRunner, {
+    config, semanticMemory, episodicMemory,
+  })
 }
 
 main().catch((err: unknown) => {

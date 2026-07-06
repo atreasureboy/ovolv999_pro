@@ -88,26 +88,25 @@ Always update status as you work: set in_progress before starting a task, comple
     },
   }
 
-  async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+  execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
     const todos = input.todos as TodoItem[] | undefined
 
     if (!Array.isArray(todos)) {
-      return { content: 'Error: todos must be an array', isError: true }
+      return Promise.resolve({ content: 'Error: todos must be an array', isError: true })
     }
 
     // Validate each item
     for (const item of todos) {
       if (!item.id || !item.content || !item.status || !item.priority) {
-        return {
+        return Promise.resolve({
           content: `Error: each todo must have id, content, status, and priority. Got: ${JSON.stringify(item)}`,
           isError: true,
-        }
+        })
       }
     }
 
     // Update: merge by id. If id doesn't exist, add it.
     // If todos covers ALL existing ids, treat as replace.
-    const existingIds = new Set(todoList.map(t => t.id))
     const incomingIds = new Set(todos.map(t => t.id))
     const allExistingCovered = todoList.every(t => incomingIds.has(t.id))
 
@@ -129,9 +128,9 @@ Always update status as you work: set in_progress before starting a task, comple
     }
 
     const rendered = renderTodoList()
-    return {
+    return Promise.resolve({
       content: `Tasks updated:\n${rendered}`,
       isError: false,
-    }
+    })
   }
 }

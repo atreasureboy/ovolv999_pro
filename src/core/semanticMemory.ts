@@ -14,7 +14,7 @@
 
 import { appendFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { createHash } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 
 export interface SemanticMemoryEntry {
   id: string
@@ -29,10 +29,21 @@ interface TagIndex {
   [tag: string]: Set<string> // tag → set of entry IDs
 }
 
-let _memCounter = 0
 function nextId(): string {
-  _memCounter++
-  return `sem_${Date.now()}_${_memCounter}`
+  return `sem_${randomUUID()}`
+}
+
+// Source priority for conflict resolution (AgentOS pattern):
+// user_stated(3) > agent_inferred/consolidation(2) > tool_observed(1)
+const SOURCE_PRIORITY: Record<string, number> = {
+  user_stated: 3,
+  agent_inferred: 2,
+  consolidation: 2,
+  tool_observed: 1,
+}
+
+function sourceRank(source: string): number {
+  return SOURCE_PRIORITY[source] ?? 1
 }
 
 function contentHash(content: string): string {
@@ -87,10 +98,15 @@ export class SemanticMemory {
 
     const hash = contentHash(entry.content)
 
-    // Check for duplicate content
+    // Check for duplicate content — resolve by source priority
     for (const [id, existing] of this.entries) {
-      if (contentHash(existing.content) === hash && existing.tags.includes(entry.tags[0] ?? '')) {
-        // Update existing entry instead of duplicating
+      if (contentHash(existing.content) === hash) {
+        // Source priority conflict resolution (AgentOS pattern)
+        if (sourceRank(entry.source) < sourceRank(existing.source)) {
+          // Lower priority can't override higher — keep existing
+          return existing
+        }
+        // Same or higher priority → update
         const updated: SemanticMemoryEntry = {
           ...existing,
           confidence: Math.max(existing.confidence, entry.confidence),
@@ -98,7 +114,6 @@ export class SemanticMemory {
           source: entry.source,
         }
         this.entries.set(id, updated)
-        // Rewrite the entire file (infrequent enough for JSONL)
         this.persistAll()
         return updated
       }
@@ -180,14 +195,6 @@ export class SemanticMemory {
 
     const limit = options.limit ?? 20
     return results.slice(0, limit)
-  }
-
-  /** Get entries relevant to a specific target/host */
-  searchByTarget(target: string, limit = 15): SemanticMemoryEntry[] {
-    return this.search({
-      keywords: [target],
-      limit,
-    })
   }
 
   /** Count total entries */

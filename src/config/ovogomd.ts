@@ -84,7 +84,7 @@ function dirsUpToRoot(cwd: string, gitRoot: string): string[] {
   return dirs.reverse()
 }
 
-export async function loadOvogoMd(cwd: string): Promise<OvogoMdFile[]> {
+export function loadOvogoMd(cwd: string): OvogoMdFile[] {
   const files: OvogoMdFile[] = []
 
   // 1. User-level: ~/.ovogo/OVOGO.md

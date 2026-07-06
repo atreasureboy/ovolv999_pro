@@ -1,35 +1,9 @@
 // Core types for ovolv999 execution engine
 
-export interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string | ContentBlock[]
-  tool_call_id?: string
-  name?: string
-}
-
-export type ContentBlock =
-  | TextBlock
-  | ToolUseBlock
-  | ToolResultBlock
-
-export interface TextBlock {
-  type: 'text'
-  text: string
-}
-
-export interface ToolUseBlock {
-  type: 'tool_use'
-  id: string
-  name: string
-  input: Record<string, unknown>
-}
-
-export interface ToolResultBlock {
-  type: 'tool_result'
-  tool_use_id: string
-  content: string
-  is_error?: boolean
-}
+import type { EventLog } from './eventLog.js'
+import type { SemanticMemory } from './semanticMemory.js'
+import type { EpisodicMemory } from './episodicMemory.js'
+import type { AgentConfig } from './agentPresets.js'
 
 // OpenAI-compatible tool call format
 export interface ToolCall {
@@ -85,17 +59,17 @@ export interface ToolContext {
    * (e.g. image analysis via vision API) to reuse the same endpoint + key.
    */
   apiConfig?: { apiKey: string; baseURL?: string; model: string }
-  /**
-   * Session output directory — for tools that need to write to the engagement
-   * session directory (e.g. compiled binaries, source code, logs).
-   */
+  /** Session output directory — for tools that need to write artifacts
+   * (e.g. generated files, logs, reports). */
   sessionDir?: string
   /** Event log for audit trail — best-effort, never throws */
-  eventLog?: import('./eventLog.js').EventLog
+  eventLog?: EventLog
   /** Semantic memory — cross-turn knowledge persistence */
-  semanticMemory?: import('./semanticMemory.js').SemanticMemory
+  semanticMemory?: SemanticMemory
   /** Episodic memory — action trajectory persistence */
-  episodicMemory?: import('./episodicMemory.js').EpisodicMemory
+  episodicMemory?: EpisodicMemory
+  /** Tool names available to this agent — used for skill permission checks */
+  availableToolNames?: string[]
 }
 
 /**
@@ -106,6 +80,12 @@ export interface IHookRunner {
   runPreToolCall(toolName: string, input: Record<string, unknown>): void
   runPostToolCall(toolName: string, result: string, isError: boolean): void
   runUserPromptSubmit(prompt: string): void
+  /** Called when the engine encounters an unrecoverable error */
+  runOnError?(error: Error, context: { turnNumber: number; lastToolName?: string }): void
+  /** Called when a run completes (any reason: stop, max_iterations, error, interrupted) */
+  runOnComplete?(result: TurnResult): void
+  /** Called after context compaction (auto-summary of older messages) */
+  runOnContextOverflow?(tokensBefore: number, tokensAfter: number): void
 }
 
 export interface EngineConfig {
@@ -127,22 +107,33 @@ export interface EngineConfig {
   hookRunner?: IHookRunner
   /** Session output directory — injected into sub-agent prompts */
   sessionDir?: string
-  /** Primary target identifier (URL/IP) */
-  primaryTarget?: string
-  /**
-   * Maximum context window in tokens for the selected model.
+  /** Maximum context window in tokens for the selected model.
    * Defaults to 200_000 (claude-sonnet-4-x).  Used to compute percentage-based
    * compact/warn thresholds instead of a flat token count.
    */
   maxContextTokens?: number
-  /** Context budget manager for explicit token allocation */
-  contextBudget?: import('./contextBudget.js').ContextBudgetManager
+  /** LLM sampling temperature (default: 0) */
+  temperature?: number
+  /** Max output tokens per LLM response (default: 8192) */
+  maxOutputTokens?: number
   /** Event log for audit trail */
-  eventLog?: import('./eventLog.js').EventLog
+  eventLog?: EventLog
   /** Semantic memory — cross-turn knowledge persistence */
-  semanticMemory?: import('./semanticMemory.js').SemanticMemory
+  semanticMemory?: SemanticMemory
   /** Episodic memory — action trajectory persistence */
-  episodicMemory?: import('./episodicMemory.js').EpisodicMemory
+  episodicMemory?: EpisodicMemory
+  /**
+   * Enabled module names — determines which capability modules are active.
+   * If omitted, the engine auto-enables modules based on available config
+   * (memory if semanticMemory set, critic if sessionDir set, workspace if
+   * sessionDir set). Set to [] for a lightweight agent with no modules.
+   */
+  enabledModules?: string[]
+  /** Agent configuration — composable identity + modules + tools.
+   * When set, overrides systemPrompt / planMode / enabledModules / etc.
+   * Replaces the legacy AgentType enum with config-driven differentiation.
+   */
+  agent?: AgentConfig
 }
 
 export interface TurnResult {
@@ -153,6 +144,6 @@ export interface TurnResult {
    * error          — hard abort (Ctrl+C × 2) or unrecoverable API error
    * interrupted    — soft pause requested (Ctrl+C × 1), partial history preserved
    */
-  reason: 'max_iterations' | 'stop_sequence' | 'tool_end' | 'error' | 'interrupted'
+  reason: 'max_iterations' | 'stop_sequence' | 'error' | 'interrupted'
   output: string
 }

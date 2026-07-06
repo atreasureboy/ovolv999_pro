@@ -3,30 +3,34 @@
  *
  * Strategy:
  *   1. Estimate token count of current conversation (~4 chars/token)
- *   2. When it exceeds COMPACT_THRESHOLD_TOKENS, call the LLM to summarize
+ *   2. When context pressure exceeds the compact threshold (85%), call the LLM to summarize
  *   3. Replace old messages with a single system-style summary message
  *   4. Keep last N recent messages verbatim (fresh context)
  */
 
-import OpenAI from 'openai'
+import type OpenAI from 'openai'
 import type { OpenAIMessage } from './types.js'
-import { existsSync, readFileSync } from 'fs'
-import { join } from 'path'
 
 // Rough chars-per-token estimate (conservative — better to compact early)
 const CHARS_PER_TOKEN = 3.5
-
-// Legacy flat threshold — kept for backward compat but percentage-based thresholds
-// (CONTEXT_WARN_PCT / CONTEXT_COMPACT_PCT) are preferred for dynamic model support.
-export const COMPACT_THRESHOLD_TOKENS = 80_000
 
 // Model max context window (tokens). Matches claude-sonnet-4-x 200k context.
 // Sub-agents inherit the same model so one constant is sufficient here.
 export const MODEL_MAX_CONTEXT_TOKENS = 200_000
 
-// Percentage-based thresholds (inspired by reference codebase autoCompact.ts)
+// Percentage-based thresholds — the single source of truth for context pressure
 const CONTEXT_WARN_PCT    = 0.70   // 70%  → display yellow warning
-const CONTEXT_COMPACT_PCT = 0.85   // 85%  → force compact (was flat 80 k)
+const CONTEXT_COMPACT_PCT = 0.85   // 85%  → force auto-compact
+
+/** Compression strategy selected based on context pressure */
+export type CompressionStrategy = 'proportional' | 'priority' | 'aggressive'
+
+/** Determine compression strategy from usage fraction */
+export function getCompressionStrategy(pct: number): CompressionStrategy {
+  if (pct > 0.9) return 'aggressive'
+  if (pct > 0.85) return 'priority'
+  return 'proportional'
+}
 
 // Keep this many recent messages verbatim after compaction
 const KEEP_RECENT_MESSAGES = 8
@@ -47,11 +51,12 @@ export interface ContextState {
   shouldWarn: boolean
   /** True when ≥ CONTEXT_COMPACT_PCT — trigger auto-compact immediately */
   shouldCompact: boolean
+  /** Compression strategy based on current pressure */
+  strategy: CompressionStrategy
 }
 
 /**
  * Calculate current context usage and determine whether to warn or compact.
- * Mirrors calculateTokenWarningState() in the reference implementation.
  */
 export function calculateContextState(
   messages: OpenAIMessage[],
@@ -65,6 +70,7 @@ export function calculateContextState(
     pct,
     shouldWarn:   pct >= CONTEXT_WARN_PCT,
     shouldCompact: pct >= CONTEXT_COMPACT_PCT,
+    strategy: getCompressionStrategy(pct),
   }
 }
 
@@ -87,10 +93,6 @@ export function estimateTokens(messages: OpenAIMessage[]): number {
     chars += 20 // message envelope overhead
   }
   return Math.ceil(chars / CHARS_PER_TOKEN)
-}
-
-export function shouldCompact(messages: OpenAIMessage[], threshold = COMPACT_THRESHOLD_TOKENS): boolean {
-  return estimateTokens(messages) > threshold
 }
 
 // ── Compact prompt ──────────────────────────────────
@@ -148,70 +150,6 @@ function extractSummary(text: string): string {
 }
 
 /**
- * Read the current anchor store from the session directory.
- * Returns a formatted string suitable for injecting into the system prompt,
- * or null if no anchors exist.
- */
-function readAnchorsAsPrompt(sessionDir?: string): string | null {
-  if (!sessionDir) return null
-  const anchorsPath = join(sessionDir, '.anchors.json')
-  if (!existsSync(anchorsPath)) return null
-
-  try {
-    const raw = readFileSync(anchorsPath, 'utf8')
-    const anchors = JSON.parse(raw) as {
-      ports?: Array<{ target: string; port: number; protocol: string; service?: string }>
-      cves?: Array<{ cve: string; target: string; score: number }>
-      creds?: Array<{ target: string; username?: string; credential: string; type: string }>
-      shells?: Array<{ id: string; target: string; user: string; privilege: string }>
-      flags?: Array<{ content: string; target: string; path: string }>
-    }
-
-    const lines: string[] = ['## 关键发现锚点（不可遗忘）']
-
-    if (anchors.ports && anchors.ports.length > 0) {
-      lines.push('### 已确认端口')
-      for (const p of anchors.ports.slice(-20)) {
-        lines.push(`- ${p.target}:${p.port}/${p.protocol}${p.service ? ` (${p.service})` : ''}`)
-      }
-    }
-
-    if (anchors.cves && anchors.cves.length > 0) {
-      lines.push('### 已确认漏洞')
-      for (const c of anchors.cves.slice(-20)) {
-        lines.push(`- ${c.cve} → ${c.target} (score: ${c.score}%)`)
-      }
-    }
-
-    if (anchors.creds && anchors.creds.length > 0) {
-      lines.push('### 已获取凭证')
-      for (const cr of anchors.creds.slice(-20)) {
-        lines.push(`- ${cr.target} | ${cr.username || '(unknown)'}:${cr.credential}`)
-      }
-    }
-
-    if (anchors.shells && anchors.shells.length > 0) {
-      lines.push('### 已控制 Shell')
-      for (const s of anchors.shells.slice(-10)) {
-        lines.push(`- ${s.id} @ ${s.target} (${s.privilege})`)
-      }
-    }
-
-    if (anchors.flags && anchors.flags.length > 0) {
-      lines.push('### 已捕获 Flag')
-      for (const f of anchors.flags.slice(-10)) {
-        lines.push(`- FLAG: ${f.content} (${f.path})`)
-      }
-    }
-
-    if (lines.length <= 1) return null
-    return lines.join('\n')
-  } catch {
-    return null
-  }
-}
-
-/**
  * Serialize messages to text for the summarization prompt.
  */
 function serializeMessages(messages: OpenAIMessage[]): string {
@@ -243,28 +181,38 @@ export interface CompactResult {
 }
 
 /**
- * Compact the conversation if it exceeds the token threshold.
+ * Compact the conversation by summarizing older messages.
+ * The engine gates this call — by the time we're here, compaction is needed.
  * Returns new (smaller) messages array.
  */
 export async function maybeCompact(
   client: OpenAI,
   model: string,
   messages: OpenAIMessage[],
-  threshold = COMPACT_THRESHOLD_TOKENS,
-  sessionDir?: string,
 ): Promise<CompactResult> {
   const originalTokens = estimateTokens(messages)
 
-  if (originalTokens <= threshold) {
-    return { compacted: false, messages, summaryTokens: 0, originalTokens }
+  // Keep the most recent messages verbatim — they're the freshest context.
+  // Ensure we don't split between an assistant message with tool_calls and its
+  // tool result messages (OpenAI API requires them to stay together).
+  let splitPoint = messages.length - KEEP_RECENT_MESSAGES
+  if (splitPoint > 0) {
+    // Walk forward from split point — if we're in the middle of tool results,
+    // extend to include all results for the last assistant tool_calls.
+    // Cap at messages.length - 2 to always keep at least 2 recent messages.
+    const maxSplit = messages.length - 2
+    while (
+      splitPoint < maxSplit &&
+      messages[splitPoint]?.role === 'tool'
+    ) {
+      splitPoint++
+    }
   }
+  const recentMessages = messages.slice(splitPoint)
+  const olderMessages = messages.slice(0, splitPoint)
 
-  // Keep the most recent messages verbatim — they're the freshest context
-  const recentMessages = messages.slice(-KEEP_RECENT_MESSAGES)
-  const olderMessages = messages.slice(0, -KEEP_RECENT_MESSAGES)
-
-  if (olderMessages.length === 0) {
-    // Nothing to compact — can't help
+  if (olderMessages.length === 0 || messages.length < KEEP_RECENT_MESSAGES * 2) {
+    // Not enough messages to compact meaningfully
     return { compacted: false, messages, summaryTokens: 0, originalTokens }
   }
 
@@ -285,7 +233,7 @@ export async function maybeCompact(
       // No tools — we explicitly don't want tool calls here
     })
     summaryText = response.choices[0]?.message?.content ?? ''
-  } catch (err) {
+  } catch {
     // If summarization fails, return original messages unchanged
     return { compacted: false, messages, summaryTokens: 0, originalTokens }
   }
@@ -295,9 +243,8 @@ export async function maybeCompact(
     return { compacted: false, messages, summaryTokens: 0, originalTokens }
   }
 
-  // Build compacted history: summary message + anchors + recent verbatim messages
-  const anchorContent = readAnchorsAsPrompt(sessionDir)
-  const summaryContent = `[CONVERSATION SUMMARY — previous context compacted]\n\n${summary}${anchorContent ? `\n\n---\n\n${anchorContent}` : ''}`
+  // Build compacted history: summary message + recent verbatim messages
+  const summaryContent = `[CONVERSATION SUMMARY — previous context compacted]\n\n${summary}`
 
   const summaryMessage: OpenAIMessage = {
     role: 'user',

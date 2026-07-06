@@ -10,19 +10,19 @@
  *   3. .ovogo/skills/          (project-specific skills)
  *
  * Supported file layouts:
- *   .ovogo/skills/nmap.md          → skill name "nmap"  (flat file)
- *   .ovogo/skills/agentos/SKILL.md → skill name "agentos"  (directory + SKILL.md)
+ *   .ovogo/skills/review.md          → skill name "review"  (flat file)
+ *   .ovogo/skills/agentos/SKILL.md   → skill name "agentos"  (directory + SKILL.md)
  *
  * YAML frontmatter (optional):
  *   ---
- *   name: nmap
- *   description: nmap — 网络端口扫描与服务识别
+ *   name: review
+ *   description: review — 代码审查与改进建议
  *   ---
  *   If present, name/description are read from it.
  *   If absent, name = filename stem, description = first heading line.
  *
  * Skills support $ARGS substitution:
- *   /nmap scan 10.0.0.1  →  $ARGS = "scan 10.0.0.1"
+ *   /review src/core  →  $ARGS = "src/core"
  */
 
 import { readdirSync, readFileSync, existsSync } from 'fs'
@@ -34,6 +34,10 @@ export interface Skill {
   description: string
   prompt: string
   source: 'builtin' | 'global' | 'project'
+  /** Tools this skill requires (parsed from frontmatter, optional) */
+  tools?: string[]
+  /** Skill version (parsed from frontmatter, optional) */
+  version?: string
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -83,10 +87,18 @@ function parseSkillFile(
       description = firstLine.replace(/^#+\s*/, '').trim() || name
     }
 
+    // Tools: comma-separated list in frontmatter (e.g. tools: Bash, Read, Grep)
+    const tools = frontmatter.tools
+      ? frontmatter.tools.split(',').map((t) => t.trim()).filter(Boolean)
+      : undefined
+
+    // Version (optional)
+    const version = frontmatter.version || undefined
+
     // Prompt: body (frontmatter stripped), or full raw if no frontmatter
     const prompt = body || raw
 
-    return { name, description, prompt, source }
+    return { name, description, prompt, source, tools, version }
   } catch {
     return null
   }
@@ -103,7 +115,7 @@ function loadFromDir(dir: string, source: 'global' | 'project'): Skill[] {
   try {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.isFile() && entry.name.endsWith('.md')) {
-        // Flat file: skills/nmap.md → name = "nmap"
+        // Flat file: skills/review.md → name = "review"
         const name = basename(entry.name, '.md')
         const skill = parseSkillFile(join(dir, entry.name), name, source)
         if (skill) skills.push(skill)
@@ -218,6 +230,21 @@ export function loadSkills(cwd: string): Map<string, Skill> {
   }
 
   return map
+}
+
+/**
+ * Format a skill index section for the system prompt.
+ * Only injects name + description (lazy loading — full prompt via load_skill tool).
+ */
+export function formatSkillIndex(skills: Map<string, Skill>): string {
+  if (skills.size === 0) return ''
+  const lines: string[] = ['## 可用技能 (Skills)', '', '使用 load_skill 工具加载完整 prompt:']
+  for (const skill of skills.values()) {
+    const tools = skill.tools?.length ? ` [需要: ${skill.tools.join(', ')}]` : ''
+    lines.push(`- **${skill.name}** — ${skill.description}${tools}`)
+  }
+  lines.push('')
+  return lines.join('\n')
 }
 
 /**

@@ -1,0 +1,73 @@
+/**
+ * CriticModule — self-correction loop.
+ *
+ * Every N iterations, runs a lightweight LLM call to review recent
+ * conversation history for common failure modes. If issues are found,
+ * returns a correction message to inject.
+ *
+ * Extracted from engine.ts (maybeRunCritic + critic invocation in loop).
+ */
+
+import type OpenAI from 'openai'
+import type { AgentModule, ModuleBootResult, ModuleIterationContext, ModuleIterationResult } from '../core/module.js'
+import {
+  CRITIC_INTERVAL,
+  CRITIC_MIN_ITERATIONS,
+  CRITIC_CONTEXT_MESSAGES,
+  CRITIC_MAX_TOKENS,
+  DEFAULT_CRITIC_SYSTEM_PROMPT,
+  formatMessagesForCritic,
+  parseCriticOutput,
+} from '../prompts/critic.js'
+
+export class CriticModule implements AgentModule {
+  readonly name = 'critic'
+
+  constructor(
+    private client: OpenAI,
+    private model: string,
+    private planMode: boolean,
+  ) {}
+
+  boot(): ModuleBootResult {
+    return {}
+  }
+
+  async onIteration(ctx: ModuleIterationContext): Promise<ModuleIterationResult | void> {
+    if (this.planMode) return
+    if (ctx.iteration < CRITIC_MIN_ITERATIONS) return
+    if (ctx.iteration % CRITIC_INTERVAL !== 0) return
+
+    const recent = ctx.messages.slice(-CRITIC_CONTEXT_MESSAGES)
+    if (recent.length < 4) return
+
+    try {
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: [
+            { role: 'system', content: DEFAULT_CRITIC_SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: `以下是最近的操作历史，请检查是否存在失误：\n\n${formatMessagesForCritic(recent)}`,
+            },
+          ],
+          temperature: 0,
+          max_tokens: CRITIC_MAX_TOKENS,
+        },
+        { signal: ctx.abortSignal },
+      )
+
+      const output = response.choices[0]?.message?.content ?? ''
+      const criticism = parseCriticOutput(output)
+
+      if (criticism) {
+        return {
+          injectMessage: `[🔍 自动纠错检查]\n${criticism}\n\n请根据以上纠错提示立即调整行动。`,
+        }
+      }
+    } catch {
+      // critic failures must never break the main loop
+    }
+  }
+}

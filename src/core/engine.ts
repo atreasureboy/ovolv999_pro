@@ -41,16 +41,9 @@ import {
   calculateContextState,
   MODEL_MAX_CONTEXT_TOKENS,
 } from './compact.js'
-import { ContextBudgetManager, CompressionStrategy } from './contextBudget.js'
-import {
-  CRITIC_INTERVAL,
-  CRITIC_MIN_ITERATIONS,
-  CRITIC_CONTEXT_MESSAGES,
-  CRITIC_MAX_TOKENS,
-  DEFAULT_CRITIC_SYSTEM_PROMPT,
-  formatMessagesForCritic,
-  parseCriticOutput,
-} from '../prompts/critic.js'
+import type { AgentModule, ModuleBootResult, ModuleBootContext } from './module.js'
+import { globalModuleRegistry } from './moduleRegistry.js'
+import { applyAgentToConfig } from './agentPresets.js'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -149,19 +142,57 @@ export class ExecutionEngine {
   private softAbortRequested = false
   /** Event log — may be undefined if not configured */
   private eventLog: EngineConfig['eventLog']
-  /** Context budget manager — may be undefined if not configured */
-  private contextBudget: EngineConfig['contextBudget']
+  /** Enabled capability modules */
+  private modules: AgentModule[]
+  /** Cached boot results (populated in runTurn) */
+  private moduleBootResults: ModuleBootResult[] = []
+  /** All available tools — base + module-provided (populated in runTurn) */
+  private allTools: Tool[]
 
   constructor(config: EngineConfig, renderer: Renderer) {
-    this.config = config
+    // Merge agent config into effective config (overrides legacy fields)
+    this.config = applyAgentToConfig(config)
     this.renderer = renderer
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
     })
     this.tools = createTools(config.extraTools ?? [])
+    this.allTools = this.tools  // will be updated with module tools in runTurn
     this.eventLog = config.eventLog
-    this.contextBudget = config.contextBudget
+
+    // Resolve enabled modules
+    const enabledNames = this.deriveEnabledModules()
+    this.modules = enabledNames.length > 0
+      ? globalModuleRegistry.resolve(enabledNames, {
+          client: this.client,
+          model: config.model,
+          config,
+        })
+      : []
+  }
+
+  /**
+   * Determine which modules to enable.
+   * If config.enabledModules is explicitly set, use it.
+   * Otherwise auto-derive from available config (backward compat).
+   */
+  private deriveEnabledModules(): string[] {
+    if (this.config.enabledModules !== undefined) {
+      return this.config.enabledModules
+    }
+    // Auto-derive for backward compatibility
+    const auto: string[] = []
+    if (this.config.semanticMemory && this.config.episodicMemory) {
+      auto.push('memory')
+    }
+    if (this.config.sessionDir && !(this.config.planMode ?? false)) {
+      auto.push('critic')
+    }
+    if (this.config.sessionDir) {
+      auto.push('workspace')
+    }
+    return auto
   }
 
   /** Hard cancel — immediately aborts in-flight API calls and tool executions */
@@ -174,62 +205,36 @@ export class ExecutionEngine {
     this.softAbortRequested = true
   }
 
-  // ── Critic ──────────────────────────────────────────────────────────────
-
-  /**
-   * Run a lightweight critic check over recent conversation history.
-   * Returns a correction string to inject, or null if everything looks fine.
-   * Errors are swallowed — critic failures must never break the main loop.
-   */
-  private async maybeRunCritic(
-    messages: OpenAIMessage[],
-    turnAbortSignal: AbortSignal,
-  ): Promise<string | null> {
-    const recent = messages.slice(-CRITIC_CONTEXT_MESSAGES)
-    if (recent.length < 4) return null
-
-    try {
-      const response = await this.client.chat.completions.create(
-        {
-          model: this.config.model,
-          messages: [
-            { role: 'system', content: DEFAULT_CRITIC_SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: `以下是最近的操作历史，请检查是否存在失误：\n\n${formatMessagesForCritic(recent)}`,
-            },
-          ],
-          temperature: 0,
-          max_tokens: CRITIC_MAX_TOKENS,
-        },
-        { signal: turnAbortSignal },
-      )
-
-      const output = response.choices[0]?.message?.content ?? ''
-      return parseCriticOutput(output)
-    } catch {
-      return null
-    }
-  }
-
   // ── System prompt ───────────────────────────────────────────────────────
 
-  private buildSystemPrompt(planMode: boolean): string {
+  private buildSystemPrompt(planMode: boolean, moduleSections: string[] = []): string {
     const baseSystemPrompt = this.config.systemPrompt ?? ''
+    const sections = moduleSections.length > 0
+      ? baseSystemPrompt + '\n\n---\n\n' + moduleSections.join('\n\n---\n\n')
+      : baseSystemPrompt
     if (planMode) {
-      return getPlanModePrefix() + baseSystemPrompt
+      return getPlanModePrefix() + sections
     }
-    return baseSystemPrompt
+    return sections
   }
 
   // ── Tool definitions ────────────────────────────────────────────────────
 
-  private getToolDefinitions(planMode: boolean): ToolDefinition[] {
-    const allToolDefs = getToolDefinitions(this.tools)
-    if (planMode) {
-      return allToolDefs.filter((t) => PLAN_MODE_TOOLS.has(t.function.name))
+  private getToolDefinitions(planMode: boolean, moduleTools: Tool[] = []): ToolDefinition[] {
+    // Merge base tools + module-provided tools
+    const allTools = [...this.tools, ...moduleTools]
+    let defs = getToolDefinitions(allTools)
+    // Filter by agent tool whitelist (if configured)
+    const whitelist = this.config.agent?.tools
+    if (whitelist) {
+      const allowed = new Set(whitelist)
+      defs = defs.filter((t) => allowed.has(t.function.name))
     }
-    return allToolDefs
+    // Filter by plan mode (read-only tools only)
+    if (planMode) {
+      defs = defs.filter((t) => PLAN_MODE_TOOLS.has(t.function.name))
+    }
+    return defs
   }
 
   // ── Context budget ──────────────────────────────────────────────────────
@@ -237,24 +242,9 @@ export class ExecutionEngine {
   private async evaluateContextBudget(messages: OpenAIMessage[]): Promise<void> {
     const maxCtxTokens =
       this.config.maxContextTokens ?? MODEL_MAX_CONTEXT_TOKENS
-    const baseCtxState = calculateContextState(messages, maxCtxTokens)
+    const ctxState = calculateContextState(messages, maxCtxTokens)
 
-    let ctxState: ReturnType<typeof calculateContextState> & {
-      strategy?: CompressionStrategy
-    }
-    if (this.contextBudget) {
-      const budgetState = this.contextBudget.evaluate(baseCtxState.currentTokens)
-      ctxState = {
-        ...baseCtxState,
-        strategy: budgetState.strategy,
-        shouldCompact: budgetState.shouldCompact,
-        shouldWarn: budgetState.shouldWarn,
-      }
-    } else {
-      ctxState = { ...baseCtxState, strategy: undefined }
-    }
-
-    // Show context stats every 5 iterations (main agent only)
+    // Show context warning (main agent only — sub-agents have no sessionDir)
     if (this.config.sessionDir && ctxState.shouldWarn) {
       this.renderer.contextWarning(
         ctxState.currentTokens,
@@ -275,8 +265,6 @@ export class ExecutionEngine {
         this.client,
         this.config.model,
         messages,
-        undefined,
-        this.config.sessionDir,
       )
 
       if (compactResult.compacted) {
@@ -290,6 +278,11 @@ export class ExecutionEngine {
           tokens_after: compactResult.summaryTokens,
           reduction: compactResult.originalTokens - compactResult.summaryTokens,
         })
+        // Lifecycle hook: OnContextOverflow
+        this.config.hookRunner?.runOnContextOverflow?.(
+          compactResult.originalTokens,
+          compactResult.summaryTokens,
+        )
       }
     }
   }
@@ -317,10 +310,10 @@ export class ExecutionEngine {
             { role: 'system', content: systemPrompt },
             ...(messages as OpenAI.Chat.ChatCompletionMessageParam[]),
           ],
-          tools: toolDefs as OpenAI.Chat.ChatCompletionTool[],
+          tools: toolDefs,
           tool_choice: 'auto',
-          temperature: 0,
-          max_tokens: 8192,
+          temperature: this.config.temperature ?? 0,
+          max_tokens: this.config.maxOutputTokens ?? 8192,
           stream: true,
         },
         { signal: turnAbortSignal },
@@ -421,24 +414,25 @@ export class ExecutionEngine {
       }
     }
 
-    const tool = findTool(this.tools, toolName)
+    // Enforce agent tool whitelist (defence in depth — LLM shouldn't see non-whitelisted tools)
+    const whitelist = this.config.agent?.tools
+    if (whitelist && !whitelist.includes(toolName)) {
+      return {
+        content: `Tool "${toolName}" is not available to this agent.`,
+        isError: true,
+      }
+    }
+
+    const tool = findTool(this.allTools, toolName)
     if (!tool) {
       return { content: `Unknown tool: ${toolName}`, isError: true }
     }
 
     const result = await tool.execute(input, context)
 
-    // Write episodic memory entry
-    const epiMem = this.config.episodicMemory
-    if (epiMem && !result.isError) {
-      epiMem.write({
-        turn: turnNumber,
-        toolName,
-        inputSummary: JSON.stringify(input).slice(0, 200),
-        resultSummary: result.content.slice(0, 300),
-        outcome: 'success',
-        timestamp: new Date().toISOString(),
-      })
+    // Notify modules of tool execution (e.g. episodic memory write)
+    for (const module of this.modules) {
+      module.onToolCall?.(toolName, input, result, turnNumber)
     }
 
     return result
@@ -565,6 +559,7 @@ export class ExecutionEngine {
 
   private buildToolContext(
     turnAbortSignal: AbortSignal,
+    modulePatches: Partial<ToolContext> = {},
   ): ToolContext {
     return {
       cwd: this.config.cwd,
@@ -575,10 +570,9 @@ export class ExecutionEngine {
         baseURL: this.config.baseURL,
         model: this.config.model,
       },
-      sessionDir: this.config.sessionDir,
       eventLog: this.eventLog,
-      semanticMemory: this.config.semanticMemory,
-      episodicMemory: this.config.episodicMemory,
+      // Module patches override/extend the base context (incl. availableToolNames)
+      ...modulePatches,
     }
   }
 
@@ -586,7 +580,7 @@ export class ExecutionEngine {
 
   /**
    * Execute a single user turn with streaming output.
-   * Full Think → Act → Observe loop.
+   * Full Think → Act → Observe loop with module lifecycle hooks.
    */
   async runTurn(
     userMessage: string,
@@ -594,9 +588,37 @@ export class ExecutionEngine {
   ): Promise<{ result: TurnResult; newHistory: OpenAIMessage[] }> {
     const planMode = this.config.planMode ?? false
 
-    // Build system prompt and tool definitions
-    const systemPrompt = this.buildSystemPrompt(planMode)
-    const toolDefs = this.getToolDefinitions(planMode)
+    // ── Boot Sequence: resolve + boot modules ──
+    const bootCtx: ModuleBootContext = {
+      cwd: this.config.cwd,
+      sessionDir: this.config.sessionDir,
+      config: this.config,
+      userMessage,
+    }
+    this.moduleBootResults = await Promise.all(
+      this.modules.map(m => Promise.resolve(m.boot(bootCtx))),
+    )
+    const moduleSections = this.moduleBootResults.flatMap(r => r.systemPromptSections ?? [])
+    const toolContextPatch = this.moduleBootResults.reduce(
+      (acc, r) => ({ ...acc, ...r.toolContextPatch }),
+      {} as Partial<ToolContext>,
+    )
+    // Collect tools provided by modules
+    const moduleTools = this.moduleBootResults.flatMap(r => r.tools ?? [])
+    this.allTools = [...this.tools, ...moduleTools]
+
+    // Record boot trajectory (AgentOS pattern)
+    this.eventLog?.append('boot_context', 'engine', {
+      trajectory: 'boot_context',
+      modules: this.modules.map(m => m.name),
+      module_sections: moduleSections.length,
+      module_tools: moduleTools.length,
+      user_message_length: userMessage.length,
+    })
+
+    // Build system prompt (with module sections) and tool definitions
+    const systemPrompt = this.buildSystemPrompt(planMode, moduleSections)
+    const toolDefs = this.getToolDefinitions(planMode, moduleTools)
 
     // Per-turn AbortController
     const turnAbortController = new AbortController()
@@ -608,16 +630,19 @@ export class ExecutionEngine {
     let iterations = 0
     let finalOutput = ''
     let turnNumber = 0
-    const toolContext = this.buildToolContext(turnAbortController.signal)
+    const toolContext = this.buildToolContext(
+      turnAbortController.signal,
+      { ...toolContextPatch, availableToolNames: toolDefs.map(t => t.function.name) },
+    )
 
+    let result: TurnResult
+    let lastToolName: string | undefined
     try {
       while (iterations < this.config.maxIterations) {
         // Check for cancellation
         if (turnAbortController.signal.aborted) {
-          return {
-            result: { stopped: true, reason: 'error', output: finalOutput },
-            newHistory: messages,
-          }
+          result = { stopped: true, reason: 'error', output: finalOutput }
+          break
         }
 
         iterations++
@@ -626,36 +651,29 @@ export class ExecutionEngine {
         // Soft-interrupt check
         if (this.softAbortRequested) {
           this.softAbortRequested = false
-          return {
-            result: { stopped: true, reason: 'interrupted', output: finalOutput },
-            newHistory: messages,
-          }
+          result = { stopped: true, reason: 'interrupted', output: finalOutput }
+          break
         }
 
         // Context budget + auto-compact
         await this.evaluateContextBudget(messages)
 
-        // Critic injection — every CRITIC_INTERVAL iterations
-        if (
-          iterations >= CRITIC_MIN_ITERATIONS &&
-          iterations % CRITIC_INTERVAL === 0 &&
-          !planMode &&
-          this.config.sessionDir // only main agent has sessionDir
-        ) {
-          const criticism = await this.maybeRunCritic(
+        // Module iteration hooks (critic, etc.)
+        for (const module of this.modules) {
+          if (!module.onIteration) continue
+          const iterResult = await module.onIteration({
+            iteration: iterations,
             messages,
-            turnAbortController.signal,
-          )
-          if (criticism) {
-            this.renderer.warn(`[批判检查] ${criticism.split('\n')[0]}`)
-            this.eventLog?.append('critic_flag', 'critic', {
-              criticism: criticism.slice(0, 500),
+            abortSignal: turnAbortController.signal,
+          })
+          if (iterResult?.injectMessage) {
+            const msg = iterResult.injectMessage
+            this.renderer.warn(`[${module.name}] ${msg.split('\n')[0]}`)
+            this.eventLog?.append('module_flag', module.name, {
+              message: msg.slice(0, 500),
               iteration: iterations,
             })
-            messages.push({
-              role: 'user',
-              content: `[🔍 自动纠错检查]\n${criticism}\n\n请根据以上纠错提示立即调整行动。`,
-            })
+            messages.push({ role: 'user', content: msg })
           }
         }
 
@@ -689,14 +707,8 @@ export class ExecutionEngine {
 
         // Check if we're done (no tool calls)
         if (finishReason === 'stop' || rawToolCalls.length === 0) {
-          return {
-            result: {
-              stopped: true,
-              reason: 'stop_sequence',
-              output: finalOutput,
-            },
-            newHistory: messages,
-          }
+          result = { stopped: true, reason: 'stop_sequence', output: finalOutput }
+          break
         }
 
         // Parse tool calls
@@ -710,6 +722,11 @@ export class ExecutionEngine {
           return { tc, input }
         })
 
+        // Track last tool name for OnError hook
+        if (parsedCalls.length > 0) {
+          lastToolName = parsedCalls[parsedCalls.length - 1].tc.name
+        }
+
         // Schedule and execute tool calls
         const { aborted } = await this.scheduleToolCalls(
           parsedCalls,
@@ -721,27 +738,49 @@ export class ExecutionEngine {
         )
 
         if (aborted || turnAbortController.signal.aborted) {
-          return {
-            result: { stopped: true, reason: 'error', output: finalOutput },
-            newHistory: messages,
-          }
+          result = { stopped: true, reason: 'error', output: finalOutput }
+          break
         }
       }
+
+      // If loop completed without break (max iterations)
+      if (!result!) {
+        this.renderer.warn(
+          `Max iterations (${this.config.maxIterations}) reached`,
+        )
+        result = { stopped: true, reason: 'max_iterations', output: finalOutput }
+      }
+    } catch (err) {
+      // Lifecycle hook: OnError
+      this.config.hookRunner?.runOnError?.(err as Error, {
+        turnNumber: iterations,
+        lastToolName,
+      })
+      // Don't re-throw — construct error result so onComplete hooks still fire
+      result = { stopped: true, reason: 'error', output: finalOutput }
     } finally {
       this.currentTurnAbortController = null
     }
 
-    this.renderer.warn(
-      `Max iterations (${this.config.maxIterations}) reached`,
-    )
-    return {
-      result: {
-        stopped: true,
-        reason: 'max_iterations',
-        output: finalOutput,
-      },
-      newHistory: messages,
+    // ── Module onComplete hooks (reflection, etc.) ──
+    for (const module of this.modules) {
+      try {
+        await module.onComplete?.({
+          cwd: this.config.cwd,
+          sessionDir: this.config.sessionDir,
+          turnResult: result,
+          messages,
+          eventLog: this.eventLog,
+        })
+      } catch {
+        // module onComplete failures must never break the engine
+      }
     }
+
+    // ── Lifecycle hook: OnComplete ──
+    this.config.hookRunner?.runOnComplete?.(result)
+
+    return { result, newHistory: messages }
   }
 
   getModel(): string {

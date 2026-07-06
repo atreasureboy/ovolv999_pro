@@ -2,11 +2,12 @@
 
 <div align="center">
 
-**可插拔的 Claude Code Agent 插件框架 · 流式引擎 · 并发调度 · 子 Agent 隔离**
+**统一 Harness · 模块化能力 · 流式引擎 · 并发调度 · 配置驱动角色**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js)](https://nodejs.org/)
+[![Tests](https://img.shields.io/badge/Tests-46%20passed-brightgreen)]()
 
 > `ovogogogo "任何你需要它完成的任务"`
 
@@ -14,102 +15,177 @@
 
 ## 简介
 
-ovolv999 是一个**可插拔的 Agent 基座框架**。它不绑定任何特定领域——你可以通过编写自定义 Tool 插件将其接入任何场景（安全评估、代码审计、运维自动化、数据管道等），基座提供流式 LLM 调度、并发工具分发、子 Agent 隔离执行和上下文预算管理。
+ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参考 AgentOS 架构。
 
-- **流式引擎** — Streaming LLM API，tool_call 解析 → 自动执行 → 结果注入 → 循环
+**所有 Agent 共享同一套运行时（Harness），通过启用/禁用模块获得差异化能力。** 不存在 `agent_type` 枚举——角色是 `AgentConfig`（identity + modules + tools）的组合配置。
+
+- **统一 Harness** — 所有 Agent 走同一套 Boot Sequence，按模块配置差异化执行
+- **模块化能力** — memory / critic / workspace / reflection 四个可组合模块
+- **配置驱动角色** — 探索者、规划者、审查者 = 不同 AgentConfig 配置实例，零代码新增角色
+- **Memory 三原语** — `memory_write` / `memory_search` / `memory_recall`，Agent 主动操作长时记忆
+- **来源归因 + 冲突解决** — `user_stated > agent_inferred > tool_observed` 优先级链
+- **验证闸门** — 子 agent 完成代码修改后自动跑 `tsc --noEmit` 验证（No Tuple, No Merge）
+- **Session 整合** — REPL 退出时自动总结 episodic 经验写入 SemanticMemory（关闭学习闭环）
+- **调用链追踪** — 子 agent spawn 深度追踪（max 5），防递归 + 审计
+- **Skill 懒加载** — Boot 时注入技能索引，LLM 按需通过 `load_skill` 加载
+- **生命周期 Hooks** — 6 种：PreToolCall / PostToolCall / OnError / OnComplete / OnContextOverflow / UserPromptSubmit
 - **并发调度** — 安全工具并行 (Promise.all)，状态工具串行，自动分区
-- **子 Agent 隔离** — 独立 Engine + 专属系统提示 + 隔离会话目录
-- **上下文预算** — 自动压缩、token 比例管理、语义/过程记忆
-- **Critic 纠错** — 每 N 轮自动检查，发现错误自动回退重试
-- **零领域绑定** — 核心是 Agent 基础设施，业务逻辑通过 Tool 插件注入
+- **流式引擎** — Streaming LLM API，tool_call 解析 → 分区调度 → 结果注入 → 循环
+- **上下文预算** — 统一百分比阈值 (70% warn / 85% compact)，tool_call 对保护
+- **零领域绑定** — 核心是 Agent 基础设施，业务逻辑通过 Module + Tool 插件注入
 
-## 完整架构全景图
-
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║                         ovolv999 — 完整架构全景图                          ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║                                                                          ║
-║  用户输入: "你的任意任务指令"                                               ║
-║       │                                                                 ║
-║       ▼                                                                 ║
-║  ┌──────────────────────────────────────────────────────────────────┐  ║
-║  │  CLI Entry  bin/ovogogogo.ts                                      │  ║
-║  │  ├── 参数解析 → REPL 交互 / 单任务模式                             │  ║
-║  │  ├── Settings 加载 → 环境变量 / JSON / engagement config         │  ║
-║  │  ├── Hooks 加载 → 工具执行前后回调                                │  ║
-║  │  └── Engine 创建 → 启动执行循环                                    │  ║
-║  └────────────────────────────────┬─────────────────────────────────┘  ║
-║                                   │                                     ║
-║                                   ▼                                     ║
-║  ┌──────────────────────────────────────────────────────────────────┐  ║
-║  │  Execution Engine  src/core/engine.ts                             │  ║
-║  │  ┌────────────────────────────────────────────────────────────┐  │  ║
-║  │  │  Streaming LLM API (Claude / OpenAI)                       │  │  ║
-║  │  │       │                                                     │  │  ║
-║  │  │       ├─▶ 纯文本 → 注入历史 → 返回                          │  │  ║
-║  │  │       │                                                     │  │  ║
-║  │  │       └─▶ tool_calls → 分区调度 → 执行 → 结果注入 → 继续   │  │  ║
-║  │  └────────────────────────────────────────────────────────────┘  │  ║
-║  │                                                                   │  ║
-║  │  ├── Critic 检查 → 每 N 轮自动纠错                                 │  ║
-║  │  ├── Context 压缩 → 自动上下文预算                                 │  ║
-║  │  └── partitionToolCalls → 并行(安全) vs 串行(状态)                │  ║
-║  └────────────────────────────────┬─────────────────────────────────┘  ║
-║                                   │                                     ║
-║              ┌────────────────────┼────────────────────┐               ║
-║              │                    │                    │               ║
-║              ▼                    ▼                    ▼               ║
-║  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐      ║
-║  │  Agent Tool      │ │  Bash Tool       │ │  File Tools      │      ║
-║  │  子 Agent 委派   │ │  命令执行        │ │  Read/Write/Edit │      ║
-║  │  独立 Engine     │ │  && 链式         │ │  Glob/Grep       │      ║
-║  └──────────────────┘ └──────────────────┘ └──────────────────┘      ║
-║  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐      ║
-║  │  Web Tools       │ │  Session Tools   │ │  Todo Tool       │      ║
-║  │  Fetch / Search  │ │  Tmux / Shell    │ │  任务跟踪        │      ║
-║  └──────────────────┘ └──────────────────┘ └──────────────────┘      ║
-║           │                     │                                     ║
-║  ┌────────▼─────────────────────▼──────────────────────────────┐     ║
-║  │              知识库 & 记忆层                                   │     ║
-║  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐       │     ║
-║  │  │ SemanticMem  │ │ EpisodicMem  │ │ ContextBudget│       │     ║
-║  │  │ 概念知识     │ │ 行为轨迹     │ │ 上下文预算   │       │     ║
-║  │  └──────────────┘ └──────────────┘ └──────────────┘       │     ║
-║  └───────────────────────────────────────────────────────────┘     ║
-║                                                                    ║
-║  输出: sessions/YYYY_MM_DD_HHMM/ → 会话产物、报告、文件             ║
-╚══════════════════════════════════════════════════════════════════════╝
-```
-
-## 核心模块详解
-
-### Execution Engine — 执行引擎
+## 架构全景
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    ExecutionEngine                            │
-│                                                               │
-│  runTurn(message, history)                                    │
-│    │                                                          │
-│    ├─▶ Streaming LLM API 调用                                │
-│    │                                                          │
-│    ├─▶ 解析响应:                                              │
-│    │    ├── 纯文本 → 注入历史 → 返回                          │
-│    │    └── tool_calls → partitionToolCalls → 分区执行       │
-│    │                                                          │
-│    ├─▶ Critic 检查 → 每 N 轮自动纠错                          │
-│    │                                                          │
-│    └─▶ 并发调度:                                              │
-│         ├── 安全工具批次 → Promise.all 并行                    │
-│         ├── Write/Edit → 串行 (状态依赖)                       │
-│         └── Agent → 独立 Engine 隔离执行                      │
-│                                                               │
-│  支持: softAbort (ESC 暂停) / hardAbort (Ctrl+C 取消)         │
-└──────────────────────────────────────────────────────────────┘
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        ovolv999 — 统一 Harness + 模块化 Agent 基座             ║
+║               42 files · 8,300+ lines · tsc 0 · eslint 0 · 46 tests          ║
+║               Runtime deps: openai · glob · zod (仅 3 个)                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  ┌─ AgentConfig ─────────────────────────────────────────────────────────┐   ║
+║  │  identity(SOUL) + modules[] + tools[] + skills[] + limits             │   ║
+║  │  ↓ preset (explore/plan/code-reviewer/general-purpose) 或 custom      │   ║
+║  └───────────────────────────────────────────────────────────────────────┘   ║
+║                                  │                                           ║
+║  ┌───────────────────────────────▼───────────────────────────────────────┐   ║
+║  │                    ExecutionEngine (统一 Harness)                       │   ║
+║  │                                                                        │   ║
+║  │  ┌─ Boot Sequence (7 steps) ───────────────────────────────────────┐  │   ║
+║  │  │ 1. applyAgentToConfig  →  合并 agent 配置                         │  │   ║
+║  │  │ 2. deriveEnabledModules → 自动推导或显式指定                      │  │   ║
+║  │  │ 3. modules.boot()      → 并行启动，收集 prompt/tools/context      │  │   ║
+║  │  │ 4. buildSystemPrompt   → 组装 identity + module sections          │  │   ║
+║  │  │ 5. getToolDefinitions  → 白名单 + planMode 双重过滤               │  │   ║
+║  │  │ 6. buildToolContext    → 基础 + module patches + toolNames        │  │   ║
+║  │  │ 7. boot_context 轨迹   → EventLog 记录启动摘要                    │  │   ║
+║  │  └──────────────────────────────────────────────────────────────────┘  │   ║
+║  │                                                                        │   ║
+║  │  ┌─ Engine Loop ────────────────────────────────────────────────────┐  │   ║
+║  │  │  modules.onIteration()  ← CriticModule 每 N 轮纠错                │  │   ║
+║  │  │  evaluateContextBudget() ← 统一百分比阈值 (70%/85%)               │  │   ║
+║  │  │  callLLM() → streaming → consumeStream()                          │  │   ║
+║  │  │  partitionToolCalls() → parallel(safe) / serial(stateful)         │  │   ║
+║  │  │  executeToolCall() → 白名单硬执行 + planMode 硬执行                │  │   ║
+║  │  │  modules.onToolCall()  ← MemoryModule 写 episodic (成功+失败)     │  │   ║
+║  │  │  hooks: PreToolCall / PostToolCall                                │  │   ║
+║  │  └──────────────────────────────────────────────────────────────────┘  │   ║
+║  │                                                                        │   ║
+║  │  ┌─ Post-Run ───────────────────────────────────────────────────────┐  │   ║
+║  │  │  modules.onComplete()  ← ReflectionModule LLM 知识提取            │  │   ║
+║  │  │  hooks: OnComplete / OnError / OnContextOverflow                  │  │   ║
+║  │  └──────────────────────────────────────────────────────────────────┘  │   ║
+║  │                                                                        │   ║
+║  │  Abort: softAbort(ESC) / hardAbort(Ctrl+C)                            │   ║
+║  └────────────────────────────────────────────────────────────────────────┘   ║
+║                                                                              ║
+║  ┌─ Modules (4) ──────┐  ┌─ Tools (14) ────────┐  ┌─ Memory ───────────┐    ║
+║  │ memory             │  │ Bash / Read / Write  │  │ Semantic:          │    ║
+║  │  ├ boot: 相关性检索│  │ Edit / Glob / Grep   │  │  关键词去重 +       │    ║
+║  │  ├ tools: write/   │  │ TodoWrite / WebFetch │  │  来源优先级冲突解决  │    ║
+║  │  │   search/recall │  │ WebSearch / Agent    │  │ Episodic:          │    ║
+║  │  └ onToolCall:     │  │ load_skill           │  │  成功+失败工具轨迹  │    ║
+║  │     episodic 写入  │  │ memory_write         │  │ Boot: 相关性 top-10│    ║
+║  │ critic             │  │ memory_search        │  │ Exit: session 整合  │    ║
+║  │  └ onIteration:    │  │ memory_recall        │  └────────────────────┘    ║
+║  │     每 N 轮纠错    │  │ TmuxSession / Shell  │                             ║
+║  │ workspace          │  └──────────────────────┘  ┌─ Communication ─────┐   ║
+║  │  └ boot: sessionDir│                              │ Agent (invoke):     │   ║
+║  │ reflection         │  ┌─ Verification Gate ───┐   │  AgentConfig 驱动   │   ║
+║  │  ├ dep: memory     │  │ verify:true           │   │  callDepth max 5   │   ║
+║  │  └ onComplete:     │  │  → 自动 tsc --noEmit  │   │  verify 闸门       │   ║
+║  │     LLM 知识提取   │  │  → 结果附带验证状态    │   │  EventLog 审计     │   ║
+║  └────────────────────┘  └───────────────────────┘  └─────────────────────┘   ║
+║                                                                              ║
+║  输出: sessions/session_TIMESTAMP/ → 会话产物、EventLog、agent-logs          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 ```
 
-### 并发分区调度
+## 核心概念
+
+### Module System — 模块化能力
+
+所有 Agent 共享同一套 Harness，通过启用/禁用模块获得差异化能力：
+
+```typescript
+const agentConfig: AgentConfig = {
+  identity: { systemPrompt: (cwd) => `你是运维员...` },
+  modules: {
+    memory: { enabled: true },      // 记忆检索 + memory_write/search/recall 工具
+    critic: { enabled: true },      // 每 N 轮 LLM 纠错
+    workspace: { enabled: true },   // sessionDir 产物目录
+    reflection: { enabled: true },  // Run 结束后知识提取 → SemanticMemory
+  },
+  tools: ['Bash', 'Read', 'Grep'],
+  maxIterations: 50,
+}
+```
+
+| 模块 | Boot 行为 | 循环行为 | 提供的工具 |
+|------|----------|---------|-----------|
+| `memory` | 关键词相关性检索注入 top-10 | onToolCall 写 episodic | memory_write / memory_search / memory_recall |
+| `critic` | — | onIteration 每 5 轮纠错 | — |
+| `workspace` | 注入 sessionDir 到 ToolContext | — | — |
+| `reflection` | — | onComplete LLM 知识提取 | — |
+
+### AgentConfig — 配置驱动角色（无 agent_type）
+
+4 个内置 preset + 无限自定义组合：
+
+| 预设 | modules | tools | 场景 |
+|------|---------|-------|------|
+| `explore` | `{}` | Read/Glob/Grep/Web* (planMode) | 代码探索 |
+| `plan` | `{}` | Read/Glob/Grep/Web* (planMode) | 实现规划 |
+| `code-reviewer` | `{}` | Read/Glob/Grep (planMode) | 代码审查 |
+| `general-purpose` | `{memory,workspace}` | 全工具（排除 Agent 防递归） | 通用子任务 |
+| 自定义 | 任意组合 | 任意子集 | 零代码新增角色 |
+
+### Memory System — 来源归因 + 冲突解决 + 整合闭环
+
+```
+写入 (memory_write):
+  source: user_stated(3) > agent_inferred(2) > tool_observed(1)
+  → 同内容冲突: 低优先级不能覆盖高优先级
+
+Boot 时检索:
+  userMessage → extractKeywords → scoreRelevance → top-10 注入
+
+Session 整合 (REPL 退出):
+  episodic 全量 → LLM 总结 → 高置信度知识 → SemanticMemory (source: consolidation)
+
+跨 Session:
+  下次 Boot → 相关性检索 → 自动注入
+```
+
+### Verification Gate — 验证闸门 (No Tuple, No Merge)
+
+```typescript
+// 主 agent 派子 agent 实现代码后自动验证
+Agent({
+  description: "实现登录功能",
+  prompt: "...",
+  subagent_type: "general-purpose",
+  verify: true   // ← 完成后自动跑 tsc --noEmit
+})
+// 结果包含:
+// [验证闸门] ✓ tsc — passed
+// 或
+// [验证闸门] ✗ tsc — FAILED + 错误详情
+```
+
+### Agent Communication — 调用链追踪
+
+```
+主 agent (depth=0)
+  └─ spawn general-purpose (depth=1)
+       └─ EventLog: invoke_sent {call_depth: 1}
+       └─ 子 agent 执行...
+       └─ EventLog: invoke_completed {call_depth: 1, duration_ms, output_preview}
+
+调用深度 max 5 → 超限拒绝 (防递归)
+```
+
+## 并发分区调度
 
 ```
 tool_calls [A, B, C, D, E, F]
@@ -126,56 +202,85 @@ tool_calls [A, B, C, D, E, F]
            → Promise.all([E, F]) → 同时执行
 ```
 
-### Agent Tool — 子 Agent 隔离
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                       AgentTool                               │
-│                                                               │
-│  子 Agent = 独立 Engine + 专属系统提示 + 隔离会话目录           │
-│                                                               │
-│  可用类型:                                                     │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐            │
-│  │ explore     │ │ plan        │ │ code-reviewer│            │
-│  │ 代码探索    │ │ 实现规划    │ │ 安全代码审计 │            │
-│  │ (只读)      │ │ (只读)      │ │ (只读)       │            │
-│  └─────────────┘ └─────────────┘ └─────────────┘            │
-│  ┌─────────────┐                                             │
-│  │general-purpose│ ← 通用 agent，全部工具可用                  │
-│  └─────────────┘                                             │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### 工具层 (11 个 Core Tools)
-
-| 类别 | 工具 | 职责 |
-|------|------|------|
-| 基础 | Bash, Read, Write, Edit, Glob, Grep, TodoWrite | 文件操作、命令执行、任务跟踪 |
-| 网络 | WebFetch, WebSearch | HTTP 请求、搜索引擎 |
-| 委派 | Agent | 子 Agent 隔离调度 |
-| 会话 | TmuxSession, ShellSession | 交互进程管理 |
-
 ## 如何扩展
 
-ovolv999 的核心设计是**基座 + 插件**模式。要添加新能力：
-
-1. **编写 Tool 插件** — 实现 `Tool` 接口，在 `src/tools/index.ts` 注册
-2. **添加系统提示** — 在 `src/prompts/` 中注入领域知识
-3. **配置 Hooks** — 在 `src/config/hooks.ts` 中添加工具执行前后的钩子
+### 方式 1: 编写自定义 Tool
 
 ```typescript
-// 示例: 添加一个自定义工具
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 
 export class MyCustomTool implements Tool {
   name = 'MyCustom'
-  definition: ToolDefinition = { /* OpenAI function calling schema */ }
+  definition: ToolDefinition = {
+    type: 'function',
+    function: {
+      name: 'MyCustom',
+      description: '...',
+      parameters: { type: 'object', properties: { /* ... */ }, required: ['input'] },
+    },
+  }
   async execute(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
-    // 你的业务逻辑
     return { content: 'done', isError: false }
   }
 }
 ```
+
+注册到 `src/tools/index.ts` 或通过 `EngineConfig.extraTools` 注入。
+
+### 方式 2: 编写自定义 Module
+
+```typescript
+import type { AgentModule, ModuleBootContext, ModuleBootResult } from '../core/module.js'
+
+export class MyModule implements AgentModule {
+  readonly name = 'my-module'
+  readonly dependencies = ['memory']
+
+  boot(ctx: ModuleBootContext): ModuleBootResult {
+    return {
+      systemPromptSections: ['## Custom Knowledge\n...'],
+      tools: [myCustomTool],
+    }
+  }
+
+  onToolCall(toolName: string, input: Record<string, unknown>, result: { content: string; isError: boolean }): void {
+    // 每次工具调用后的副作用
+  }
+}
+```
+
+注册: `globalModuleRegistry.register('my-module', (ctx) => new MyModule())`
+
+### 方式 3: 自定义 Agent 角色
+
+```typescript
+const config: AgentConfig = {
+  identity: {
+    systemPrompt: (cwd: string) => `Working directory: ${cwd}\n\n你是安全审计员...`,
+  },
+  modules: { memory: { enabled: true }, workspace: { enabled: true } },
+  tools: ['Read', 'Glob', 'Grep', 'Bash'],
+  maxIterations: 50,
+}
+
+// 通过 Agent 工具的 agent_config 参数使用
+Agent({ description: '审计认证模块', prompt: '...', agent_config: config })
+```
+
+### 方式 4: 添加自定义 Skill
+
+在 `.ovogo/skills/` 下创建 Markdown 文件:
+
+```markdown
+---
+name: deploy
+description: 部署到生产环境
+tools: Bash, Read
+---
+检查 staging 环境，确认测试通过后部署到生产...
+```
+
+LLM 可通过 `load_skill("deploy")` 按需加载。
 
 ## 快速开始
 
@@ -184,13 +289,12 @@ export class MyCustomTool implements Tool {
 ```bash
 git clone https://github.com/atreasureboy/ovolv999.git
 cd ovolv999
-npm install
+pnpm install
 ```
 
 ### 配置
 
 ```bash
-# OpenAI API (或兼容端点)
 export OPENAI_API_KEY="your-key"
 # export OPENAI_BASE_URL="https://your-proxy.com/v1"
 # export OVOGO_MODEL="claude-sonnet-4-6-20250514"
@@ -203,7 +307,7 @@ export OPENAI_API_KEY="your-key"
 npx tsx bin/ovogogogo.ts
 
 # 单任务模式
-npx tsx bin/ovogogogo.ts "你的任务描述"
+npx tsx bin/ovogogogo.ts "修复 src/core 的类型错误"
 
 # 指定模型和工作目录
 npx tsx bin/ovogogogo.ts -m claude-sonnet-4-6 --cwd /my/project
@@ -214,68 +318,69 @@ npx tsx bin/ovogogogo.ts -m claude-sonnet-4-6 --cwd /my/project
 ```
 ovolv999/
 ├── bin/
-│   └── ovogogogo.ts          # 主入口 — CLI + REPL
+│   └── ovogogogo.ts           # CLI + REPL + 模块注册 + session 整合
 ├── src/
-│   ├── config/
-│   │   ├── hooks.ts          # 钩子系统 — 工具执行前后回调
-│   │   ├── settings.ts       # 配置解析 — 环境变量/JSON/engagement
-│   │   └── ovogomd.ts        # Markdown 配置加载器
-│   ├── core/
-│   │   ├── engine.ts         # 核心执行引擎 — LLM + 工具分发
-│   │   ├── types.ts          # 核心类型定义
-│   │   ├── compact.ts        # 上下文压缩 — 自动截断/摘要
-│   │   ├── contextBudget.ts  # 预算分配 — token 比例管理
-│   │   ├── episodicMemory.ts # 过程记忆 — 行为轨迹
-│   │   ├── semanticMemory.ts # 语义记忆 — 概念存储
-│   │   └── eventLog.ts       # 事件日志 — 审计追踪
-│   ├── prompts/
-│   │   ├── system.ts         # 完整系统提示词组装
-│   │   ├── tools.ts          # 工具描述常量
-│   │   └── agentPrompts.ts   # 各角色 Agent 提示词
-│   ├── tools/
-│   │   ├── index.ts          # 工具注册中心 (11 个基座工具)
-│   │   ├── bash.ts           # Bash 命令执行
-│   │   ├── agent.ts          # 子 Agent 委派
-│   │   ├── fileRead.ts       # 文件读取
-│   │   ├── fileWrite.ts      # 文件写入
-│   │   ├── fileEdit.ts       # 文件编辑
-│   │   ├── glob.ts           # 文件路径匹配
-│   │   ├── grep.ts           # 文件内容搜索
-│   │   ├── todo.ts           # 任务跟踪
-│   │   ├── webFetch.ts       # 网页抓取
-│   │   ├── webSearch.ts      # 网络搜索
-│   │   ├── tmuxSession.ts    # Tmux 会话管理
-│   │   └── shellSession.ts   # Shell 会话管理
-│   ├── skills/               # Skill 加载
-│   ├── memory/               # Memory stub
-│   └── ui/
-│       ├── renderer.ts       # 终端 UI 渲染
-│       ├── input.ts          # 用户输入处理
-│       └── tmuxLayout.ts     # Tmux 面板布局
-└── package.json
+│   ├── core/                           # 引擎核心 (10 files)
+│   │   ├── engine.ts                   # 统一 Harness — Boot Sequence + Module 集成
+│   │   ├── types.ts                    # EngineConfig / AgentConfig / IHookRunner
+│   │   ├── module.ts                   # AgentModule 接口 (4 生命周期钩子)
+│   │   ├── moduleRegistry.ts           # 工厂注册 + 依赖解析 + 环检测
+│   │   ├── agentPresets.ts             # 4 preset + resolveAgentConfig + applyAgentToConfig
+│   │   ├── compact.ts                  # 上下文压缩 + strategy + tool_call 对保护
+│   │   ├── semanticMemory.ts           # 语义记忆 + 来源优先级 + hash 去重
+│   │   ├── episodicMemory.ts           # 过程记忆 (成功+失败轨迹)
+│   │   ├── eventLog.ts                 # 不可变审计流
+│   │   └── strings.ts                  # str() 安全转换 helper
+│   ├── modules/                        # 内置能力模块 (4 files)
+│   │   ├── memory.ts                   # 相关性检索 + 3 memory tools + episodic 写入
+│   │   ├── critic.ts                   # 每 N 轮 LLM 纠错
+│   │   ├── workspace.ts                # sessionDir 注入
+│   │   └── reflection.ts               # per-turn 知识提取 + session-level 整合
+│   ├── tools/                          # 工具层 (14 files)
+│   │   ├── agent.ts                    # AgentConfig 驱动 + 验证闸门 + 调用链追踪
+│   │   ├── loadSkill.ts                # 技能懒加载 + 权限检查
+│   │   ├── bash.ts                     # 跨平台 shell + 后台模式
+│   │   └── ...                         # Read/Write/Edit/Glob/Grep/Todo/Web/Session
+│   ├── prompts/                        # 提示词 (3 files)
+│   │   ├── system.ts                   # 系统提示词组装 + skill 索引注入
+│   │   ├── tools.ts                    # 工具描述常量
+│   │   └── critic.ts                   # Critic 纠错提示词
+│   ├── config/                         # 配置 (3 files)
+│   │   ├── hooks.ts                    # 6 种 Hook + HookRunner + NoopHookRunner
+│   │   ├── settings.ts                 # JSON 解析 + TaskContext
+│   │   └── ovogomd.ts                  # OVOGO.md 多级加载
+│   ├── ui/                             # 终端 UI (3 files)
+│   │   ├── renderer.ts                 # 流式输出 + 工具卡片 + spinner
+│   │   ├── input.ts                    # readline + stdin pipe
+│   │   └── tmuxLayout.ts               # 子 agent tmux 窗口管理
+│   ├── skills/                         # 技能系统
+│   │   └── loader.ts                   # frontmatter 解析 + formatSkillIndex
+│   └── memory/                         # 记忆桥接
+│       └── index.ts                    # SemanticMemory → 系统提示词注入
+├── tests/                              # 46 tests
+│   ├── engine.test.ts                  # partitionToolCalls + compact + critic (26)
+│   └── presets.test.ts                 # AgentConfig + preset 解析 + applyAgent (20)
+└── package.json                        # 3 runtime deps: openai / glob / zod
 ```
 
-## 设计决策
+## AgentOS 概念对照
 
-### 为什么是纯基座，不绑定领域？
-
-绑定特定领域（如"二进制武器化"）的框架缺乏灵活性——换一个场景就要重写整个 engine。ovolv999 的选择：
-
-- **Engine 是纯调度器** — 不关心业务逻辑，只负责 LLM 调用、工具分区、结果注入
-- **业务逻辑在 Tool 层** — 每个 Tool 是独立的 OpenAI function calling 处理器
-- **提示词可插拔** — 领域知识通过 prompts 注入，不硬编码到 engine
-
-这意味着同一个基座可以服务完全不同的场景，只需替换 Tool 和 Prompt。
-
-### 为什么保留子 Agent 隔离？
-
-复杂任务需要多角色协作——探索者发现代码结构，规划者设计实现方案，审查者检查安全性。每个角色需要：
-
-- 独立的工具权限（探索者只读，规划者只读，审查者只读）
-- 独立的上下文（不需要知道彼此的完整对话）
-- 独立的会话目录（产物隔离）
-
-Agent Tool 提供了这个机制，且可以自定义新的子 Agent 类型。
+| AgentOS 概念 | ovolv999 实现 |
+|---|---|
+| 统一 Harness（无 agent_type） | `ExecutionEngine` + `AgentConfig` + 4 preset |
+| 模块组合驱动 | `ModuleRegistry` + memory/critic/workspace/reflection |
+| Boot Sequence | 7 步：identity → modules → boot → prompt → tools → context → trajectory |
+| 来源归因 + 冲突解决 | `user_stated(3) > agent_inferred(2) > tool_observed(1)` |
+| Memory Tool 三原语 | `memory_write` / `memory_search` / `memory_recall` |
+| Boot 时相关性检索 | `extractKeywords` + `scoreRelevance` → top-10 |
+| Memory 整合 | `consolidateSession` — REPL 退出时 LLM 总结 |
+| Skill 懒加载 | `load_skill` + `formatSkillIndex` + 权限检查 |
+| 验证闸门 (No Tuple No Merge) | `verify:true` → 自动 `tsc --noEmit` |
+| 调用链追踪 + 循环检测 | `_callDepth` max 5 + EventLog |
+| 生命周期 Hooks | 6 种 Hook 类型 |
+| Trajectory 捕获 | `boot_context` + `invoke_sent/completed` + EventLog |
+| Context 压缩 + 策略 | 统一 70%/85% + tool_call 对保护 |
+| Module-driven Tools | MemoryModule 通过 `boot().tools` 提供 3 个工具 |
 
 ## 技术栈
 
@@ -283,11 +388,10 @@ Agent Tool 提供了这个机制，且可以自定义新的子 Agent 类型。
 |------|------|
 | 语言 | TypeScript 5.7 (ESM) |
 | 运行时 | Node.js ≥ 20 |
-| LLM API | Claude (Anthropic SDK) / OpenAI SDK |
-
-## 安全声明
-
-本项目仅用于**授权安全测试**和**教育研究**目的。在未经授权的 target 上使用本工具可能违反当地法律。使用者需自行承担法律责任。
+| LLM API | OpenAI SDK (兼容 Claude 等端点) |
+| 测试 | Vitest |
+| Lint | ESLint (typescript-eslint recommendedTypeChecked) |
+| 依赖 | openai · glob · zod (仅 3 个 runtime deps) |
 
 ## 许可
 

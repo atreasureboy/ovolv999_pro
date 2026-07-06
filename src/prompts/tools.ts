@@ -9,47 +9,47 @@ The working directory persists between calls via absolute paths. Shell state (va
 IMPORTANT: Avoid using this for file operations when dedicated tools exist:
 - File search: Use Glob (NOT find or ls)
 - Content search: Use Grep (NOT grep or rg)
-- Read files: Use ReadFile (NOT cat/head/tail)
-- Edit files: Use EditFile (NOT sed/awk)
-- Write files: Use WriteFile (NOT echo > or cat <<EOF)
+- Read files: Use Read (NOT cat/head/tail)
+- Edit files: Use Edit (NOT sed/awk)
+- Write files: Use Write (NOT echo > or cat <<EOF)
 
-Reserve Bash for: security tools (nmap/nuclei/sqlmap/hydra/...), shell commands, scripts, system operations.
+Reserve Bash for: shell commands, build tools, test runners, git, scripts, system operations.
 
-## Timeout Strategy (CRITICAL for security tools)
+## Timeout Strategy
 
-Default timeout: **300 seconds (5 min)**. Max: **14400 seconds (4 hours)**.
+Default timeout: **1800 seconds (30 min)**. Max: **14400 seconds (4 hours)**.
 
-Always set an explicit timeout for security scans based on expected duration:
-- Quick scans (top ports, single host): timeout=120000
-- Standard scans (full ports, service detection): timeout=600000
-- Deep scans (nuclei full, hydra brute): timeout=3600000
-- Extended operations (nuclei -t all, large subnet): timeout=14400000
+Always set an explicit timeout for long-running commands based on expected duration:
+- Quick commands (ls, git status): default is fine
+- Build / compile: timeout=300000
+- Test suites: timeout=600000
+- Long-running tasks (full builds, large migrations): timeout=3600000+
 
-## Background Pattern for Long-Running Scans
+## Background Pattern for Long-Running Commands
 
-For scans expected to run >5 minutes, ALWAYS use background mode to avoid blocking:
+For commands expected to run >5 minutes, ALWAYS use background mode to avoid blocking:
 
 \`\`\`
 # Step 1: Launch in background, redirect output to file
 run_in_background=true
-command: "nuclei -u https://target.com -o /tmp/nuclei_out.txt 2>&1"
+command: "npm run build > /tmp/build.log 2>&1"
 
 # Step 2 (later): Check progress or read results
-command: "tail -50 /tmp/nuclei_out.txt"
+command: "tail -50 /tmp/build.log"
 
 # Or wait for completion and read
-command: "wait && cat /tmp/nuclei_out.txt"
+command: "wait && cat /tmp/build.log"
 \`\`\`
 
-## Parallel Scanning
+## Parallel Execution
 
-To run multiple scans simultaneously, call Bash multiple times with run_in_background=true in the SAME response.
+To run multiple commands simultaneously, call Bash multiple times with run_in_background=true in the SAME response.
 All background jobs start simultaneously. Check results later by reading their output files.
 
-Example: Launch nmap + nuclei + subfinder all at once:
-- Call 1: nmap scan → /tmp/nmap.txt (background)
-- Call 2: subfinder scan → /tmp/subs.txt (background)
-- Call 3: httpx probe → /tmp/httpx.txt (background)
+Example: Run build + lint + test all at once:
+- Call 1: build → /tmp/build.log (background)
+- Call 2: lint → /tmp/lint.log (background)
+- Call 3: test → /tmp/test.log (background)
 Then in next turn: read all three output files.
 
 ## Interactive Processes — CRITICAL WARNING
@@ -58,24 +58,15 @@ NEVER run interactive processes that wait for user input in a foreground Bash ca
 These will block until timeout (30 min) and produce no useful output:
 
 BLOCKED patterns:
-- msfconsole without resource file (waits at "msf6 >" or "meterpreter >")
-- nc / ncat without -l in a piped shell (blocks on stdin)
-- python3 / irb / node REPL
-- Any command that shows a "> " or "$ " prompt and waits for keystrokes
+- python3 / irb / node REPL (blocks on stdin)
+- CLI tools that show a "> " or "$ " prompt and wait for keystrokes
+- nc / ncat without -l in a piped shell
 
 CORRECT pattern — use TmuxSession for ALL interactive processes:
-  TmuxSession({ action: "new", session: "msf", command: "msfconsole -q" })
-  TmuxSession({ action: "wait_for", session: "msf", pattern: "msf6 >", timeout: 60000 })
-  TmuxSession({ action: "send", session: "msf", text: "use exploit/multi/handler" })
-  TmuxSession({ action: "wait_for", session: "msf", pattern: "msf6.*>" })
-  TmuxSession({ action: "send", session: "msf", text: "set LHOST 0.0.0.0" })
-  TmuxSession({ action: "send", session: "msf", text: "set LPORT 4444" })
-  TmuxSession({ action: "send", session: "msf", text: "run -j" })
-  TmuxSession({ action: "wait_for", session: "msf", pattern: "session \\d+ opened", timeout: 120000 })
-
-  Fallback (one-shot, no interaction needed): resource file + run_in_background
-  Bash({ command: "msfconsole -q -r /tmp/msf.rc > /tmp/msf_out.txt 2>&1", run_in_background: true })
-  KEY: "run -z" backgrounds session, "exit -y" forces exit.
+  TmuxSession({ action: "new", session: "py", command: "python3 -i" })
+  TmuxSession({ action: "wait_for", session: "py", pattern: ">>>", timeout: 10000 })
+  TmuxSession({ action: "send", session: "py", text: "print('hello')" })
+  TmuxSession({ action: "capture", session: "py", lines: 10 })
 
 ## Other Instructions
 - Always quote paths with spaces: "path with spaces/file.txt"
@@ -92,8 +83,8 @@ Usage:
 
 export const WRITE_FILE_DESCRIPTION = `Writes content to a file, creating it if it doesn't exist or overwriting if it does.
 
-IMPORTANT: For existing files, prefer EditFile (precise string replacement) over WriteFile (full overwrite).
-Only use WriteFile for:
+IMPORTANT: For existing files, prefer Edit (precise string replacement) over Write (full overwrite).
+Only use Write for:
 - Creating new files
 - Complete rewrites where the entire content changes
 

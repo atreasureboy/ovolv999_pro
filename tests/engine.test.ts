@@ -3,10 +3,9 @@ import { partitionToolCalls } from '../src/core/engine.js'
 import {
   calculateContextState,
   estimateTokens,
-  shouldCompact,
+  getCompressionStrategy,
   MODEL_MAX_CONTEXT_TOKENS,
 } from '../src/core/compact.js'
-import { ContextBudgetManager } from '../src/core/contextBudget.js'
 import { parseCriticOutput, formatMessagesForCritic } from '../src/prompts/critic.js'
 
 // ── partitionToolCalls ──────────────────────────────────────────────────────
@@ -169,62 +168,23 @@ describe('calculateContextState', () => {
   })
 })
 
-describe('shouldCompact', () => {
-  it('returns false for messages under threshold', () => {
-    const messages = [{ role: 'user' as const, content: 'short' }]
-    expect(shouldCompact(messages, 100000)).toBe(false)
+// ── getCompressionStrategy ──────────────────────────────────────────────────
+
+describe('getCompressionStrategy', () => {
+  it('returns proportional under 85%', () => {
+    expect(getCompressionStrategy(0.5)).toBe('proportional')
+    expect(getCompressionStrategy(0.7)).toBe('proportional')
+    expect(getCompressionStrategy(0.84)).toBe('proportional')
   })
 
-  it('returns true for messages over threshold', () => {
-    const messages = [{ role: 'user' as const, content: 'A'.repeat(400000) }]
-    expect(shouldCompact(messages, 100000)).toBe(true)
-  })
-})
-
-// ── ContextBudgetManager ────────────────────────────────────────────────────
-
-describe('ContextBudgetManager', () => {
-  const config = {
-    maxTokens: 200000,
-    systemPrompt: 5000,
-    memory: 10000,
-    history: 50000,
-    toolResults: 50000,
-    reserved: 4000,
-  }
-
-  it('uses proportional strategy under 75%', () => {
-    const mgr = new ContextBudgetManager(config)
-    const state = mgr.evaluate(100000) // 50%
-    expect(state.strategy).toBe('proportional')
-    expect(state.shouldCompact).toBe(false)
+  it('returns priority at 85%+', () => {
+    expect(getCompressionStrategy(0.86)).toBe('priority')
+    expect(getCompressionStrategy(0.9)).toBe('priority')
   })
 
-  it('uses priority strategy at 80%', () => {
-    const mgr = new ContextBudgetManager(config)
-    const state = mgr.evaluate(160000) // 80%
-    expect(state.strategy).toBe('priority')
-    expect(state.shouldCompact).toBe(true)
-  })
-
-  it('uses aggressive strategy at 95%', () => {
-    const mgr = new ContextBudgetManager(config)
-    const state = mgr.evaluate(190000) // 95%
-    expect(state.strategy).toBe('aggressive')
-  })
-
-  it('returns zero trim targets when under budget', () => {
-    const mgr = new ContextBudgetManager(config)
-    const state = mgr.evaluate(10000)
-    expect(state.trimTargets.history).toBe(0)
-    expect(state.trimTargets.toolResults).toBe(0)
-    expect(state.trimTargets.memory).toBe(0)
-  })
-
-  it('updateMaxTokens works', () => {
-    const mgr = new ContextBudgetManager(config)
-    mgr.updateMaxTokens(400000)
-    expect(mgr.getConfig().maxTokens).toBe(400000)
+  it('returns aggressive at 90%+', () => {
+    expect(getCompressionStrategy(0.91)).toBe('aggressive')
+    expect(getCompressionStrategy(0.99)).toBe('aggressive')
   })
 })
 

@@ -41,32 +41,30 @@ export interface HooksConfig {
   PreToolCall?: HookEntry[]
   PostToolCall?: HookEntry[]
   UserPromptSubmit?: HookEntry[]
+  OnError?: HookEntry[]
+  OnComplete?: HookEntry[]
+  OnContextOverflow?: HookEntry[]
 }
 
 /**
- * 渗透测试交战范围与上下文
- * 配置在 .ovogo/settings.json 的 "engagement" 字段
+ * 结构化任务上下文 — 注入系统提示词，为 agent 提供任务背景。
+ * 配置在 .ovogo/settings.json 的 "taskContext" 字段。
+ * 领域无关：phase/scope 均为自由字符串，不绑定任何特定业务语义。
  */
-export interface EngagementScope {
-  /** 任务名称，如 "ZhhovoTop 外网渗透 2026-Q2" */
+export interface TaskContext {
+  /** 任务名称 */
   name?: string
-  /** 当前渗透阶段 */
-  phase?: 'recon' | 'initial-access' | 'lateral-movement' | 'post-exploitation' | 'exfiltration'
-  /** 授权目标列表（IP、CIDR、域名） */
-  targets?: string[]
-  /** 明确排除的目标（不得触碰） */
-  out_of_scope?: string[]
-  /** 任务开始日期 ISO 8601 */
-  start_date?: string
-  /** 任务截止日期 ISO 8601 */
-  end_date?: string
-  /** 额外备注（客户联系人、特殊要求等） */
+  /** 当前任务阶段（自由字符串，如 "调研"、"实现"、"测试"）*/
+  phase?: string
+  /** 工作范围（目录、仓库、服务名等，非攻击目标）*/
+  scope?: string[]
+  /** 额外备注（约束、特殊要求等）*/
   notes?: string
 }
 
 export interface OvogoSettings {
   hooks?: HooksConfig
-  engagement?: EngagementScope
+  taskContext?: TaskContext
 }
 
 function tryParse(path: string): OvogoSettings {
@@ -78,22 +76,24 @@ function tryParse(path: string): OvogoSettings {
 }
 
 function mergeSettings(a: OvogoSettings, b: OvogoSettings): OvogoSettings {
-  const mergedEngagement = b.engagement
+  const mergedTaskContext = b.taskContext
     ? {
-        ...(a.engagement ?? {}),
-        ...b.engagement,
-        targets: b.engagement.targets ?? a.engagement?.targets,
-        out_of_scope: b.engagement.out_of_scope ?? a.engagement?.out_of_scope,
+        ...(a.taskContext ?? {}),
+        ...b.taskContext,
+        scope: b.taskContext.scope ?? a.taskContext?.scope,
       }
-    : a.engagement
+    : a.taskContext
 
   return {
     hooks: {
       PreToolCall: [...(a.hooks?.PreToolCall ?? []), ...(b.hooks?.PreToolCall ?? [])],
       PostToolCall: [...(a.hooks?.PostToolCall ?? []), ...(b.hooks?.PostToolCall ?? [])],
       UserPromptSubmit: [...(a.hooks?.UserPromptSubmit ?? []), ...(b.hooks?.UserPromptSubmit ?? [])],
+      OnError: [...(a.hooks?.OnError ?? []), ...(b.hooks?.OnError ?? [])],
+      OnComplete: [...(a.hooks?.OnComplete ?? []), ...(b.hooks?.OnComplete ?? [])],
+      OnContextOverflow: [...(a.hooks?.OnContextOverflow ?? []), ...(b.hooks?.OnContextOverflow ?? [])],
     },
-    engagement: mergedEngagement,
+    taskContext: mergedTaskContext,
   }
 }
 

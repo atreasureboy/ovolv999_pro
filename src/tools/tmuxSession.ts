@@ -16,6 +16,7 @@
 import { exec as execCb } from 'child_process'
 import { promisify } from 'util'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
+import { str } from '../core/strings.js'
 
 const exec = promisify(execCb)
 
@@ -27,7 +28,7 @@ async function tmux(args: string): Promise<string> {
   } catch (e: unknown) {
     const err = e as { stdout?: string; stderr?: string; message?: string }
     const out = ((err.stdout ?? '') + (err.stderr ?? '')).trim()
-    throw new Error(out || err.message || String(e))
+    throw new Error(out || err.message || String(e), { cause: e })
   }
 }
 
@@ -155,15 +156,15 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
       case 'list':     return this._list()
       case 'kill':     return this._kill(input)
       default:
-        return { content: `Unknown action "${input.action}". Use: new | send | keys | capture | wait_for | list | kill`, isError: true }
+        return { content: `Unknown action "${str(input.action)}". Use: new | send | keys | capture | wait_for | list | kill`, isError: true }
     }
   }
 
   // ── new ───────────────────────────────────────────────────────────────────
 
   private async _new(input: Record<string, unknown>): Promise<ToolResult> {
-    const name    = String(input.session ?? `ovo-${Date.now()}`)
-    const command = input.command ? String(input.command) : ''
+    const name    = str(input.session, `ovo-${Date.now()}`)
+    const command = str(input.command)
 
     if (await sessionExists(name)) {
       return { content: `Session "${name}" already exists. Use capture to check its state, or kill to recreate.`, isError: false }
@@ -198,8 +199,8 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
   // ── send ──────────────────────────────────────────────────────────────────
 
   private async _send(input: Record<string, unknown>): Promise<ToolResult> {
-    const name = String(input.session ?? '')
-    const text = String(input.text ?? '')
+    const name = str(input.session)
+    const text = str(input.text)
 
     if (!name) return { content: 'Error: session is required for send', isError: true }
     if (!text) return { content: 'Error: text is required for send', isError: true }
@@ -229,8 +230,8 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
   // ── keys ──────────────────────────────────────────────────────────────────
 
   private async _keys(input: Record<string, unknown>): Promise<ToolResult> {
-    const name = String(input.session ?? '')
-    const key  = String(input.key ?? '')
+    const name = str(input.session)
+    const key  = str(input.key)
 
     if (!name) return { content: 'Error: session is required for keys', isError: true }
     if (!key)  return { content: 'Error: key is required for keys (e.g. C-c, C-d, Escape, Enter)', isError: true }
@@ -250,7 +251,7 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
   // ── capture ───────────────────────────────────────────────────────────────
 
   private async _capture(input: Record<string, unknown>): Promise<ToolResult> {
-    const name  = String(input.session ?? '')
+    const name  = str(input.session)
     const lines = input.lines !== undefined ? Number(input.lines) : 50
 
     if (!name) return { content: 'Error: session is required for capture', isError: true }
@@ -281,8 +282,8 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
   // ── wait_for ──────────────────────────────────────────────────────────────
 
   private async _waitFor(input: Record<string, unknown>): Promise<ToolResult> {
-    const name     = String(input.session ?? '')
-    const pattern  = String(input.pattern ?? '')
+    const name     = str(input.session)
+    const pattern  = str(input.pattern)
     const timeout  = Number(input.timeout  ?? 30_000)
     const interval = Number(input.interval ?? 1_000)
 
@@ -358,7 +359,7 @@ TmuxSession({ action: "capture", session: "py", lines: 5 })  # 确认恢复到�
   // ── kill ──────────────────────────────────────────────────────────────────
 
   private async _kill(input: Record<string, unknown>): Promise<ToolResult> {
-    const name = String(input.session ?? '')
+    const name = str(input.session)
     if (!name) return { content: 'Error: session is required for kill', isError: true }
 
     if (!await sessionExists(name)) {
