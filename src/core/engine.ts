@@ -38,7 +38,8 @@ import { getPlanModePrefix } from '../prompts/system.js'
 import type { Renderer } from '../ui/renderer.js'
 import {
   maybeCompact,
-  calculateContextState,
+  estimateTokens,
+  getCompressionStrategy,
   MODEL_MAX_CONTEXT_TOKENS,
 } from './compact.js'
 import type { AgentModule, ModuleBootResult, ModuleBootContext } from './module.js'
@@ -146,6 +147,8 @@ export class ExecutionEngine {
   private modules: AgentModule[]
   /** Cached boot results (populated in runTurn) */
   private moduleBootResults: ModuleBootResult[] = []
+  /** Estimated system prompt tokens — set during boot, used in context budget */
+  private systemPromptTokens = 0
   /** All available tools — base + module-provided (populated in runTurn) */
   private allTools: Tool[]
 
@@ -156,6 +159,8 @@ export class ExecutionEngine {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
+      maxRetries: 5,      // SDK auto-retries 429/5xx with exponential backoff
+      timeout: 120_000,   // 2 min — covers slow reasoning models (deepseek-reasoner)
     })
     this.tools = createTools(config.extraTools ?? [])
     this.allTools = this.tools  // will be updated with module tools in runTurn
@@ -242,23 +247,25 @@ export class ExecutionEngine {
   private async evaluateContextBudget(messages: OpenAIMessage[]): Promise<void> {
     const maxCtxTokens =
       this.config.maxContextTokens ?? MODEL_MAX_CONTEXT_TOKENS
-    const ctxState = calculateContextState(messages, maxCtxTokens)
+    // Count messages + system prompt for accurate budget
+    const messageTokens = estimateTokens(messages)
+    const totalTokens = messageTokens + this.systemPromptTokens
+    const pct = totalTokens / maxCtxTokens
+    const shouldWarn = pct >= 0.70
+    const shouldCompact = pct >= 0.85
+    const strategy = getCompressionStrategy(pct)
 
-    // Show context warning (main agent only — sub-agents have no sessionDir)
-    if (this.config.sessionDir && ctxState.shouldWarn) {
-      this.renderer.contextWarning(
-        ctxState.currentTokens,
-        ctxState.maxTokens,
-        ctxState.pct,
-      )
+    if (this.config.sessionDir && shouldWarn) {
+      this.renderer.contextWarning(totalTokens, maxCtxTokens, pct)
     }
 
-    if (ctxState.shouldCompact) {
-      this.renderer.compactStart(ctxState.currentTokens)
+    if (shouldCompact) {
+      this.renderer.compactStart(totalTokens)
       this.eventLog?.append('context_compact', 'engine', {
-        strategy: ctxState.strategy,
-        tokens_before: ctxState.currentTokens,
-        pct: ctxState.pct,
+        strategy,
+        tokens_before: totalTokens,
+        system_prompt_tokens: this.systemPromptTokens,
+        pct,
       })
 
       const compactResult = await maybeCompact(
@@ -618,6 +625,8 @@ export class ExecutionEngine {
 
     // Build system prompt (with module sections) and tool definitions
     const systemPrompt = this.buildSystemPrompt(planMode, moduleSections)
+    // Estimate system prompt tokens for accurate context budget
+    this.systemPromptTokens = Math.ceil(systemPrompt.length / 3.5) + 20
     const toolDefs = this.getToolDefinitions(planMode, moduleTools)
 
     // Per-turn AbortController

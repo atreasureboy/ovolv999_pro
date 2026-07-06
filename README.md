@@ -7,9 +7,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-46%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/Tests-66%20passed-brightgreen)]()
 
-> `ovogogogo "任何你需要它完成的任务"`
+> `ovolv999 "任何你需要它完成的任务"`
 
 </div>
 
@@ -31,7 +31,8 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 - **生命周期 Hooks** — 6 种：PreToolCall / PostToolCall / OnError / OnComplete / OnContextOverflow / UserPromptSubmit
 - **并发调度** — 安全工具并行 (Promise.all)，状态工具串行，自动分区
 - **流式引擎** — Streaming LLM API，tool_call 解析 → 分区调度 → 结果注入 → 循环
-- **上下文预算** — 统一百分比阈值 (70% warn / 85% compact)，tool_call 对保护
+- **上下文预算** — 统一百分比阈值 (70% warn / 85% compact)，**含系统提示词 token**，tool_call 对保护
+- **API 重试** — SDK 指数退避 5 次重试 (429/5xx/ECONNRESET)，120s 超时
 - **零领域绑定** — 核心是 Agent 基础设施，业务逻辑通过 Module + Tool 插件注入
 
 ## 架构全景
@@ -39,8 +40,9 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        ovolv999 — 统一 Harness + 模块化 Agent 基座             ║
-║               42 files · 8,300+ lines · tsc 0 · eslint 0 · 46 tests          ║
+║               42 files · 8,300+ lines · tsc 0 · eslint 0 · 66 tests          ║
 ║               Runtime deps: openai · glob · zod (仅 3 个)                     ║
+║               API retry: 5x exponential backoff · 120s timeout                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ┌─ AgentConfig ─────────────────────────────────────────────────────────┐   ║
@@ -357,9 +359,11 @@ ovolv999/
 │   │   └── loader.ts                   # frontmatter 解析 + formatSkillIndex
 │   └── memory/                         # 记忆桥接
 │       └── index.ts                    # SemanticMemory → 系统提示词注入
-├── tests/                              # 46 tests
+├── tests/                              # 66 tests
 │   ├── engine.test.ts                  # partitionToolCalls + compact + critic (26)
-│   └── presets.test.ts                 # AgentConfig + preset 解析 + applyAgent (20)
+│   ├── presets.test.ts                 # AgentConfig + preset 解析 + applyAgent (20)
+│   ├── modules.test.ts                 # SemanticMemory + EpisodicMemory + ModuleRegistry (16)
+│   └── compact.test.ts                 # token 估算 + 策略 + 消息结构 (4)
 └── package.json                        # 3 runtime deps: openai / glob / zod
 ```
 
@@ -379,7 +383,9 @@ ovolv999/
 | 调用链追踪 + 循环检测 | `_callDepth` max 5 + EventLog |
 | 生命周期 Hooks | 6 种 Hook 类型 |
 | Trajectory 捕获 | `boot_context` + `invoke_sent/completed` + EventLog |
+| Context 压缩 + 策略 | 统一 70%/85% + **含系统提示词 token** + tool_call 对保护 |
 | Context 压缩 + 策略 | 统一 70%/85% + tool_call 对保护 |
+| API 重试 | SDK maxRetries=5 指数退避 (429/5xx/ECONNRESET) + 120s timeout |
 | Module-driven Tools | MemoryModule 通过 `boot().tools` 提供 3 个工具 |
 
 ## 技术栈
