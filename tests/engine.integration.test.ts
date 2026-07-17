@@ -176,3 +176,68 @@ describe('ExecutionEngine runTurn — bad-args self-heal', () => {
     expect(String(toolMsg!.content).toLowerCase()).toMatch(/error|invalid|parse/)
   })
 })
+
+describe('ExecutionEngine runTurn — concurrency actually executes in parallel', () => {
+  /** A tool that stays "active" for a few ms so we can detect execution overlap. */
+  function makeOverlapTool(name: string, tracker: { active: number; max: number }): Tool {
+    return {
+      name,
+      concurrencySafe: true,
+      definition: {
+        type: 'function',
+        function: {
+          name,
+          description: 'slow tool',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      execute(): Promise<{ content: string; isError: boolean }> {
+        tracker.active++
+        if (tracker.active > tracker.max) tracker.max = tracker.active
+        return new Promise(resolve =>
+          setTimeout(() => {
+            tracker.active--
+            resolve({ content: `ok:${name}`, isError: false })
+          }, 20),
+        )
+      },
+    }
+  }
+
+  it('runs two concurrencySafe tools concurrently (overlap observed)', async () => {
+    const tracker = { active: 0, max: 0 }
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([
+          { name: 'A', arguments: {} },
+          { name: 'B', arguments: {} },
+        ]),
+        textResponse('done'),
+      ],
+      { extraTools: [makeOverlapTool('A', tracker), makeOverlapTool('B', tracker)] },
+    )
+    await engine.runTurn('run both', [])
+    expect(tracker.max).toBeGreaterThanOrEqual(2) // they overlapped
+  })
+
+  it('runs two stateful (non-safe) tools serially (no overlap)', async () => {
+    const tracker = { active: 0, max: 0 }
+    const mk = (name: string): Tool => {
+      const t = makeOverlapTool(name, tracker)
+      t.concurrencySafe = false // opt out → forced serial
+      return t
+    }
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([
+          { name: 'A', arguments: {} },
+          { name: 'B', arguments: {} },
+        ]),
+        textResponse('done'),
+      ],
+      { extraTools: [mk('A'), mk('B')] },
+    )
+    await engine.runTurn('run both serially', [])
+    expect(tracker.max).toBe(1) // never overlapped
+  })
+})
