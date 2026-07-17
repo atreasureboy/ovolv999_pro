@@ -183,12 +183,14 @@ export class ExecutionEngine {
     // Merge agent config into effective config (overrides legacy fields)
     this.config = applyAgentToConfig(config)
     this.renderer = renderer
-    this.client = new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-      maxRetries: 5,      // SDK auto-retries 429/5xx with exponential backoff
-      timeout: 120_000,   // 2 min — covers slow reasoning models (deepseek-reasoner)
-    })
+    this.client =
+      config.client ??
+      new OpenAI({
+        apiKey: config.apiKey,
+        baseURL: config.baseURL,
+        maxRetries: 5,      // SDK auto-retries 429/5xx with exponential backoff
+        timeout: 120_000,   // 2 min — covers slow reasoning models (deepseek-reasoner)
+      })
     this.tools = createTools(config.extraTools ?? [])
     this.allTools = this.tools  // will be updated with module tools in runTurn
     this.eventLog = config.eventLog

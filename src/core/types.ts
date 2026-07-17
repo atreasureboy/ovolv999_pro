@@ -6,6 +6,7 @@ import type { EpisodicMemory } from './episodicMemory.js'
 import type { AgentConfig } from './agentPresets.js'
 import type { PermissionChecker } from './permission.js'
 import type { PricingConfig } from '../config/agentConfig.js'
+import type OpenAI from 'openai'
 
 // OpenAI-compatible tool call format
 export interface ToolCall {
@@ -102,6 +103,12 @@ export interface EngineConfig {
   model: string
   baseURL?: string
   apiKey: string
+  /**
+   * Pre-built OpenAI client — when provided, the engine skips constructing its
+   * own (test/CI injection point). Production callers leave this unset and the
+   * engine builds one from apiKey/baseURL with retry+timeout defaults.
+   */
+  client?: OpenAI
   maxIterations: number
   cwd: string
   permissionMode: 'auto' | 'ask' | 'deny'

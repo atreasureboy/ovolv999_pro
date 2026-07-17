@@ -14,6 +14,15 @@
 
 import type { ToolContext, ToolResult } from '../core/types.js'
 
+export {
+  createMockClient,
+  textResponse,
+  toolCallResponse,
+  errorResponse,
+  type ScriptedResponse,
+  type MockUsage,
+} from './mockClient.js'
+
 export interface MockToolContextOverrides extends Partial<ToolContext> {
   /** Captures the most recent progress update (for tools that report progress). */
   progressSink?: (p: number) => void
