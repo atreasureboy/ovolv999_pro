@@ -715,7 +715,11 @@ async function main(): Promise<void> {
   const model = modelArg ?? agentConfig.model ?? 'gpt-4o'
   const maxIter = maxIterArg ?? agentConfig.maxIterations ?? 200
   const maxCtxTokens = contextTokensForModel(model, agentConfig.maxContextTokens)
-  const enabledModules = agentConfig.modules ?? ['memory', 'critic', 'workspace', 'reflection']
+  // Default modules: a neutral base ships memory + workspace only. critic
+  // (per-N-turn LLM self-correction) and reflection (onComplete LLM knowledge
+  // extraction) are opinionated, API-spending behaviours — opt in via
+  // .ovogo/agent.json: "modules": ["memory","critic","workspace","reflection"].
+  const enabledModules = agentConfig.modules ?? ['memory', 'workspace']
   const verifyCommands = agentConfig.verifyCommands
   const pricing = agentConfig.pricing
   const permissionMode = permissionArg ?? agentConfig.permission?.mode ?? 'auto'

@@ -215,13 +215,13 @@ export class ExecutionEngine {
     if (this.config.enabledModules !== undefined) {
       return this.config.enabledModules
     }
-    // Auto-derive for backward compatibility
+    // Auto-derive a minimal, non-opinionated set for direct API consumers who
+    // omit enabledModules. Only side-effect-free modules are implicit; critic
+    // (per-N-turn LLM self-correction) and reflection (onComplete LLM
+    // knowledge extraction) are API-spending and must be opted in explicitly.
     const auto: string[] = []
     if (this.config.semanticMemory && this.config.episodicMemory) {
       auto.push('memory')
-    }
-    if (this.config.sessionDir && !(this.config.planMode ?? false)) {
-      auto.push('critic')
     }
     if (this.config.sessionDir) {
       auto.push('workspace')

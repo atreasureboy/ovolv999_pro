@@ -142,12 +142,14 @@ const agentConfig: AgentConfig = {
 }
 ```
 
-| 模块 | Boot 行为 | 循环行为 | 提供的工具 |
-|------|----------|---------|-----------|
-| `memory` | 关键词相关性检索注入 top-10 | onToolCall 写 episodic | memory_write / memory_search / memory_recall |
-| `critic` | — | onIteration 每 5 轮纠错 | — |
-| `workspace` | 注入 sessionDir 到 ToolContext | — | — |
-| `reflection` | — | onComplete LLM 知识提取 | — |
+| 模块 | 默认 | Boot 行为 | 循环行为 | 提供的工具 |
+|------|:----:|----------|---------|-----------|
+| `memory` | ✓ | 关键词相关性检索注入 top-10 | onToolCall 写 episodic | memory_write / memory_search / memory_recall |
+| `workspace` | ✓ | 注入 sessionDir 到 ToolContext | — | — |
+| `critic` | opt-in | — | onIteration 每 5 轮 LLM 纠错（额外 API 开销） | — |
+| `reflection` | opt-in | — | onComplete LLM 知识提取（额外 API 开销） | — |
+
+> **中立基座原则**：默认只启用无副作用的 `memory` + `workspace`。`critic` / `reflection` 是意见化的、每轮/每任务消耗额外 LLM 调用的行为，需显式开启。在 `.ovogo/agent.json` 中：`"modules": ["memory","critic","workspace","reflection"]`。
 
 ### AgentConfig — 配置驱动角色（无 agent_type）
 
@@ -322,6 +324,18 @@ tool_calls [A, B, C, D, E, F]
      └─ Batch 3 (并行): [E=Bash*, F=Agent]               ← E 自声明 safe 则并行
            → Promise.all([E, F]) → 同时执行
 ```
+
+## 工具模型
+
+引擎在 Boot 时装配工具集：11 个内置核心工具（`createTools()`：Bash / Read / Write / Edit / Glob / Grep / Todo / WebFetch / WebSearch / Agent / load_skill）+ 模块提供的工具（memory 的 3 个原语）+ MCP 动态工具（`mcp__<server>__<tool>`）+ `extraTools` 注入。
+
+| 类别 | 说明 |
+|------|------|
+| 核心工具 | 无外部依赖，任何环境可用 |
+| `TmuxSession` | **环境相关**：管理本地交互式进程（Python REPL / Node REPL / 交互式 CLI），需要宿主安装 `tmux`。未安装时优雅降级（返回 error 工具结果，不崩溃），基座本身不依赖它 |
+| MCP 工具 | 外部 stdio 进程，按 `.ovogo/agent.json` 的 `mcpServers` 声明动态接入 |
+
+工具通过 `concurrencySafe` 自声明并行安全性（Read/Glob/Grep/Web* 等只读工具 = `true`，Bash/Write/Edit = `false`），引擎据此动态分区调度。
 
 ## 如何扩展
 
