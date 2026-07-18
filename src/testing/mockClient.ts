@@ -94,11 +94,15 @@ function buildChunks(res: ScriptedResponse): Record<string, unknown>[] {
  * Create a mock OpenAI client that replays `scripts` in order, one per
  * `chat.completions.create()` call. Throws if the engine makes more calls than
  * scripted (surfaces unexpected loops in a test).
+ *
+ * Each script renders appropriately for the caller: the engine's streaming
+ * tool-loop passes `stream: true` and receives an async chunk iterable; the
+ * compaction path omits `stream` and receives a plain ChatCompletion object
+ * (read via `response.choices[0].message.content`).
  */
 export function createMockClient(scripts: ScriptedResponse[]): OpenAI {
   let callIndex = 0
-  // Returns a Promise of a chunk stream for the next scripted response.
-  const create = (): Promise<AsyncIterable<Record<string, unknown>>> => {
+  const create = (body: { stream?: boolean } = {}): Promise<unknown> => {
     const script = scripts[callIndex++]
     if (!script) {
       return Promise.reject(
@@ -108,14 +112,26 @@ export function createMockClient(scripts: ScriptedResponse[]): OpenAI {
       )
     }
     if (script.kind === 'error') return Promise.reject(script.error)
-    const chunks = buildChunks(script)
-    // A sync generator is `for await`-compatible at runtime; cast satisfies the
-    // AsyncIterable type the engine expects.
-    function* gen(): Generator<Record<string, unknown>> {
-      for (const c of chunks) yield c
+    if (body.stream) {
+      // Streaming tool-loop call → async chunk iterable (for-await compatible).
+      const chunks = buildChunks(script)
+      function* gen(): Generator<Record<string, unknown>> {
+        for (const c of chunks) yield c
+      }
+      return Promise.resolve(gen() as unknown as AsyncIterable<Record<string, unknown>>)
     }
-    return Promise.resolve(gen() as unknown as AsyncIterable<Record<string, unknown>>)
+    // Non-streaming call (e.g. compaction summarization) → ChatCompletion object.
+    return Promise.resolve(buildCompletion(script))
   }
   // Structurally compatible with the slice of OpenAI the engine uses.
   return { chat: { completions: { create } } } as unknown as OpenAI
+}
+
+/** Render a scripted response as a non-streaming ChatCompletion object. */
+function buildCompletion(res: ScriptedResponse): Record<string, unknown> {
+  const content = res.kind === 'text' ? res.content : ''
+  return {
+    choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }],
+    usage: 'usage' in res ? res.usage ?? null : null,
+  }
 }

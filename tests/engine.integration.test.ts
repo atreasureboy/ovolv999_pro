@@ -65,6 +65,7 @@ function makeEngine(
     extraTools?: Tool[]
     permissionChecker?: PermissionChecker
     maxIterations?: number
+    maxContextTokens?: number
   } = {},
 ): { engine: ExecutionEngine; eventLog: EventLog } {
   const eventLog = new EventLog(workDir)
@@ -80,6 +81,7 @@ function makeEngine(
     extraTools: opts.extraTools,
     client: createMockClient(scripts),
     permissionChecker: opts.permissionChecker,
+    maxContextTokens: opts.maxContextTokens,
   }
   const engine = new ExecutionEngine(config, new Renderer())
   return { engine, eventLog }
@@ -239,5 +241,40 @@ describe('ExecutionEngine runTurn — concurrency actually executes in parallel'
     )
     await engine.runTurn('run both serially', [])
     expect(tracker.max).toBe(1) // never overlapped
+  })
+})
+
+describe('ExecutionEngine runTurn — context compaction', () => {
+  it('summarizes old messages when context pressure exceeds the compact threshold', async () => {
+    // Pre-fill a long history so the engine has enough messages to compact
+    // (aggressive strategy keeps 4 recent; needs >= 8 total to proceed).
+    const longHistory: { role: 'user' | 'assistant'; content: string }[] = []
+    for (let i = 0; i < 10; i++) {
+      longHistory.push({ role: 'user', content: `earlier task number ${i} with plenty of detail `.repeat(4) })
+      longHistory.push({ role: 'assistant', content: `acknowledged task ${i} and did substantial work on it`.repeat(4) })
+    }
+    const preCount = longHistory.length + 1 // +1 for the new user message
+
+    // scripts[0] = compaction summarization (non-streaming); scripts[1] = final reply (streaming)
+    const { engine, eventLog } = makeEngine(
+      [
+        textResponse('<summary>The user worked through ten earlier tasks; all completed.</summary>'),
+        textResponse('all done'),
+      ],
+      { maxContextTokens: 100 }, // tiny window → pressure forces aggressive compaction
+    )
+    const { result, newHistory } = await engine.runTurn('next step', longHistory)
+
+    // A compaction event was recorded with the strategy + token reduction.
+    const compactions = eventLog.readAll().filter(e => e.type === 'context_compact')
+    expect(compactions.length).toBeGreaterThan(0)
+
+    // The compacted history carries the summary marker and is smaller than before.
+    const hasSummary = newHistory.some(
+      m => typeof m.content === 'string' && m.content.includes('CONVERSATION SUMMARY'),
+    )
+    expect(hasSummary).toBe(true)
+    expect(newHistory.length).toBeLessThan(preCount)
+    expect(result.reason).toBe('stop_sequence')
   })
 })
