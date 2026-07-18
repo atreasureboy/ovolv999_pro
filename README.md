@@ -7,7 +7,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-111%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/Tests-127%20passed-brightgreen)]()
 
 > `ovolv999 "任何你需要它完成的任务"`
 
@@ -46,7 +46,7 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        ovolv999 — 统一 Harness + 模块化 Agent 基座             ║
-║              46 files · 8,900+ lines · tsc 0 · eslint 0 · 111 tests           ║
+║              47 files · 9,100+ lines · tsc 0 · eslint 0 · 127 tests           ║
 ║               Runtime deps: openai · glob · zod (仅 3 个)                     ║
 ║               API retry: 5x exponential backoff · 120s timeout                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -195,6 +195,8 @@ const agentConfig: AgentConfig = {
 ```
 
 model→上下文窗口映射内置常见模型（gpt-4o / claude-sonnet-4-x / deepseek 等）；未知模型回退 128k。
+
+**Schema 校验**：配置经 zod schema 校验（类型 + 枚举）。结构错误（如 `permission.mode:"asky"`、`maxIterations:"三十"`）会让该文件被整体拒绝并在 stderr 打印精确路径；未知顶层键（如把 `model` 拼成 `models`）会告警但保留有效字段。配置错误不再被静默吞掉。
 
 ### 权限闸门 — Permission Gate
 

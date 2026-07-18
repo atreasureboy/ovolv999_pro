@@ -33,39 +33,60 @@
 import { readFileSync, existsSync } from 'fs'
 import { resolve, join } from 'path'
 import { homedir } from 'os'
-import type { PermissionMode, PermissionRule } from '../core/permission.js'
+import { z } from 'zod'
+
+// ── Schemas (runtime validators + the single source of truth for the types) ──
+// A misconfigured .ovogo/agent.json was previously parsed with a bare cast and
+// silently used (typos like "models" or "permission":"asky" were swallowed).
+// These schemas validate shape + enums; unknown keys are reported as likely
+// typos rather than dropped without a trace.
+
+const permissionRuleSchema = z.object({
+  tool: z.string().optional(),
+  pattern: z.string().optional(),
+  action: z.enum(['allow', 'deny', 'ask']),
+})
+
+const permissionSchema = z.object({
+  mode: z.enum(['auto', 'ask', 'deny']).optional(),
+  rules: z.array(permissionRuleSchema).optional(),
+})
 
 /** A stdio MCP server declaration. */
-export interface McpServerConfig {
-  command: string
-  args?: string[]
-  env?: Record<string, string>
-  /** Optional working directory for the spawned server process. */
-  cwd?: string
-}
+export const mcpServerSchema = z.object({
+  command: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  cwd: z.string().optional(),
+})
 
-export interface PricingConfig {
+export const pricingSchema = z.object({
   /** USD per 1M input (prompt) tokens. */
-  inputPer1M?: number
+  inputPer1M: z.number().optional(),
   /** USD per 1M output (completion) tokens. */
-  outputPer1M?: number
-}
+  outputPer1M: z.number().optional(),
+})
 
-export interface AgentConfigFile {
-  model?: string
-  maxIterations?: number
+export const agentConfigSchema = z.object({
+  model: z.string().optional(),
+  maxIterations: z.number().int().positive().optional(),
   /** Context window for the selected model. Falls back to a model→tokens map. */
-  maxContextTokens?: number
-  modules?: string[]
-  permission?: {
-    mode?: PermissionMode
-    rules?: PermissionRule[]
-  }
-  mcpServers?: Record<string, McpServerConfig>
+  maxContextTokens: z.number().int().positive().optional(),
+  modules: z.array(z.string()).optional(),
+  permission: permissionSchema.optional(),
+  mcpServers: z.record(z.string(), mcpServerSchema).optional(),
   /** Commands run by the Agent verification gate (replaces hardcoded `tsc`). */
-  verifyCommands?: string[]
-  pricing?: PricingConfig
-}
+  verifyCommands: z.array(z.string()).optional(),
+  pricing: pricingSchema.optional(),
+})
+
+// Types are derived from the schemas so structure and validator can never drift.
+export type McpServerConfig = z.infer<typeof mcpServerSchema>
+export type PricingConfig = z.infer<typeof pricingSchema>
+export type AgentConfigFile = z.infer<typeof agentConfigSchema>
+
+/** Known top-level keys — used to flag likely-typo unknown keys. */
+const KNOWN_KEYS = new Set(Object.keys(agentConfigSchema.shape))
 
 /** Known model → context window map, so consumers don't hardcode token counts. */
 export const MODEL_CONTEXT_TOKENS: Record<string, number> = {
@@ -105,14 +126,40 @@ function tryParse(path: string): AgentConfigFile {
   } catch {
     return {}
   }
+  let parsed: unknown
   try {
-    return JSON.parse(raw) as AgentConfigFile
+    parsed = JSON.parse(raw)
   } catch (err) {
     process.stderr.write(
       `[agentConfig] warning: ${path} has invalid JSON (${(err as Error).message}); ignoring this file\n`,
     )
     return {}
   }
+  // Validate against the schema. A structural failure (bad type / bad enum)
+  // rejects the whole file with an actionable message.
+  const result = agentConfigSchema.safeParse(parsed)
+  if (!result.success) {
+    const issues = result.error.issues
+      .map(i => `  · ${i.path.join('.') || '<root>'}: ${i.message}`)
+      .join('\n')
+    process.stderr.write(
+      `[agentConfig] warning: ${path} has invalid config:\n${issues}\nignoring this file\n`,
+    )
+    return {}
+  }
+  // Warn about unknown top-level keys (likely typos, e.g. "models" vs "model")
+  // without rejecting the otherwise-valid fields.
+  if (parsed && typeof parsed === 'object') {
+    const extras = Object.keys(parsed as Record<string, unknown>).filter(
+      k => !KNOWN_KEYS.has(k),
+    )
+    if (extras.length > 0) {
+      process.stderr.write(
+        `[agentConfig] warning: ${path} has unknown key(s): ${extras.join(', ')} (ignored). Known keys: ${[...KNOWN_KEYS].join(', ')}\n`,
+      )
+    }
+  }
+  return result.data
 }
 
 /** Deep-merge two config files (b wins). Arrays and objects replace by key. */
@@ -122,13 +169,20 @@ function mergeConfigs(a: AgentConfigFile, b: AgentConfigFile): AgentConfigFile {
     maxIterations: b.maxIterations ?? a.maxIterations,
     maxContextTokens: b.maxContextTokens ?? a.maxContextTokens,
     modules: b.modules ?? a.modules,
-    permission: {
-      mode: b.permission?.mode ?? a.permission?.mode,
-      rules: [...(a.permission?.rules ?? []), ...(b.permission?.rules ?? [])],
-    },
+    // Only synthesize a permission/pricing object when at least one side
+    // actually has one — otherwise a fully-rejected file would still leak an
+    // empty { mode: undefined, rules: [] } shape to consumers.
+    permission:
+      a.permission || b.permission
+        ? {
+            mode: b.permission?.mode ?? a.permission?.mode,
+            rules: [...(a.permission?.rules ?? []), ...(b.permission?.rules ?? [])],
+          }
+        : undefined,
     mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) },
     verifyCommands: b.verifyCommands ?? a.verifyCommands,
-    pricing: { ...a.pricing, ...b.pricing },
+    pricing:
+      a.pricing || b.pricing ? { ...a.pricing, ...b.pricing } : undefined,
   }
 }
 

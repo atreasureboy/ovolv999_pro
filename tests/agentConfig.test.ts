@@ -79,4 +79,74 @@ describe('loadAgentConfig', () => {
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })
+
+  it('rejects an invalid enum value and warns with the path', () => {
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const cfgDir = join(workDir, '.ovogo')
+    mkdirSync(cfgDir, { recursive: true })
+    writeFileSync(
+      join(cfgDir, 'agent.json'),
+      JSON.stringify({ model: 'gpt-4o', permission: { mode: 'asky' } }),
+      'utf8',
+    )
+    const cfg = loadAgentConfig(workDir)
+    // The whole file is rejected — no partially-applied garbage.
+    expect(cfg.model).toBeUndefined()
+    expect(cfg.permission).toBeUndefined()
+    const warned = writeSpy.mock.calls.some(c =>
+      String(c[0]).includes('invalid config'),
+    )
+    expect(warned).toBe(true)
+    writeSpy.mockRestore()
+  })
+
+  it('rejects a wrong-typed field', () => {
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const cfgDir = join(workDir, '.ovogo')
+    mkdirSync(cfgDir, { recursive: true })
+    writeFileSync(
+      join(cfgDir, 'agent.json'),
+      JSON.stringify({ maxIterations: 'a lot' }),
+      'utf8',
+    )
+    const cfg = loadAgentConfig(workDir)
+    expect(cfg.maxIterations).toBeUndefined()
+    const warned = writeSpy.mock.calls.some(c => String(c[0]).includes('invalid config'))
+    expect(warned).toBe(true)
+    writeSpy.mockRestore()
+  })
+
+  it('warns about unknown keys (likely typos) but keeps the valid fields', () => {
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const cfgDir = join(workDir, '.ovogo')
+    mkdirSync(cfgDir, { recursive: true })
+    writeFileSync(
+      join(cfgDir, 'agent.json'),
+      JSON.stringify({ models: 'gpt-4o', model: 'gpt-4o' }), // "models" is a typo
+      'utf8',
+    )
+    const cfg = loadAgentConfig(workDir)
+    expect(cfg.model).toBe('gpt-4o') // valid field still applied
+    const warned = writeSpy.mock.calls.some(c =>
+      String(c[0]).includes('unknown key'),
+    )
+    expect(warned).toBe(true)
+    writeSpy.mockRestore()
+  })
+
+  it('rejects a permission rule missing the required action', () => {
+    const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    const cfgDir = join(workDir, '.ovogo')
+    mkdirSync(cfgDir, { recursive: true })
+    writeFileSync(
+      join(cfgDir, 'agent.json'),
+      JSON.stringify({ permission: { rules: [{ tool: 'Bash' }] } }), // no action
+      'utf8',
+    )
+    const cfg = loadAgentConfig(workDir)
+    expect(cfg.permission).toBeUndefined()
+    const warned = writeSpy.mock.calls.some(c => String(c[0]).includes('invalid config'))
+    expect(warned).toBe(true)
+    writeSpy.mockRestore()
+  })
 })
