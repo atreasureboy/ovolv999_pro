@@ -74,19 +74,33 @@ export class Logger {
     if (this.debugBuffer.length > this.maxBuffer) this.debugBuffer.shift()
 
     if (LEVEL_ORDER[level] < this.minLevel) return
-    try { this.sink(styled) } catch { /* never break on log failure */ }
+    try {
+      this.sink(styled)
+    } catch {
+      /* never break on log failure */
+    }
 
     if (this.eventLog) {
       try {
         this.eventLog.append('log', this.component, { level, msg, ...detail })
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
   }
 
-  debug(msg: string, detail?: Record<string, unknown>): void { this.emit('debug', msg, detail) }
-  info(msg: string, detail?: Record<string, unknown>): void  { this.emit('info', msg, detail) }
-  warn(msg: string, detail?: Record<string, unknown>): void  { this.emit('warn', msg, detail) }
-  error(msg: string, detail?: Record<string, unknown>): void { this.emit('error', msg, detail) }
+  debug(msg: string, detail?: Record<string, unknown>): void {
+    this.emit('debug', msg, detail)
+  }
+  info(msg: string, detail?: Record<string, unknown>): void {
+    this.emit('info', msg, detail)
+  }
+  warn(msg: string, detail?: Record<string, unknown>): void {
+    this.emit('warn', msg, detail)
+  }
+  error(msg: string, detail?: Record<string, unknown>): void {
+    this.emit('error', msg, detail)
+  }
 
   /** Recent debug lines (oldest→newest) for crash diagnostics. */
   captureRecent(): string[] {

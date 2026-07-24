@@ -36,11 +36,7 @@ export function saveConversation(
     messages,
   }
   try {
-    writeFileSync(
-      join(sessionDir, 'conversation.json'),
-      JSON.stringify(snapshot, null, 2),
-      'utf8',
-    )
+    writeFileSync(join(sessionDir, 'conversation.json'), JSON.stringify(snapshot, null, 2), 'utf8')
   } catch {
     // best-effort: never break the turn on snapshot failure
   }

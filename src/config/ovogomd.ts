@@ -45,7 +45,8 @@ function readAndTruncate(filePath: string): string | null {
       const buf = Buffer.from(truncated, 'utf8').slice(0, MAX_BYTES)
       const str = buf.toString('utf8')
       const lastNl = str.lastIndexOf('\n')
-      truncated = (lastNl > 0 ? str.slice(0, lastNl) : str) + '\n\n[... truncated at 25 000 bytes ...]'
+      truncated =
+        (lastNl > 0 ? str.slice(0, lastNl) : str) + '\n\n[... truncated at 25 000 bytes ...]'
     }
 
     return truncated.trim() || null
@@ -123,10 +124,10 @@ export function formatOvogoMdForPrompt(files: OvogoMdFile[]): string {
   const sections = files.map((f) => {
     const typeLabel =
       f.type === 'user'
-        ? "(your personal global instructions — not checked into the project)"
+        ? '(your personal global instructions — not checked into the project)'
         : f.type === 'project'
-          ? "(project instructions, checked into the codebase)"
-          : "(project-private instructions — not checked in)"
+          ? '(project instructions, checked into the codebase)'
+          : '(project-private instructions — not checked in)'
 
     return `Contents of ${f.path} ${typeLabel}:\n\n${f.content}`
   })

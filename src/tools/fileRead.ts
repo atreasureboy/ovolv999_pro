@@ -62,9 +62,7 @@ export class FileReadTool implements Tool {
       const endLine = Math.min(startLine - 1 + maxLines, total)
 
       const slice = lines.slice(startLine - 1, endLine)
-      const numbered = slice
-        .map((line, i) => `${startLine + i}\t${line}`)
-        .join('\n')
+      const numbered = slice.map((line, i) => `${startLine + i}\t${line}`).join('\n')
 
       const header =
         total > maxLines

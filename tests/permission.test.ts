@@ -11,10 +11,13 @@ describe('fingerprint', () => {
     expect(fingerprint('Bash', { command: 'ls -la' })).toBe('ls -la')
   })
 
-  it('extracts file paths for filesystem tools', () => {
+  it('extracts file paths for filesystem tools with fallback field names', () => {
     expect(fingerprint('Write', { file_path: '/tmp/a.txt' })).toBe('/tmp/a.txt')
     expect(fingerprint('Edit', { file_path: '/tmp/b.ts' })).toBe('/tmp/b.ts')
     expect(fingerprint('Read', { file_path: '/tmp/c.md' })).toBe('/tmp/c.md')
+    expect(fingerprint('Read', { path: '/tmp/d.json' })).toBe('/tmp/d.json')
+    expect(fingerprint('Write', { file: '/tmp/e.py' })).toBe('/tmp/e.py')
+    expect(fingerprint('Edit', { target_file: '/tmp/f.go' })).toBe('/tmp/f.go')
   })
 
   it('extracts patterns for search tools', () => {
@@ -43,7 +46,7 @@ describe('PermissionChecker — modes', () => {
 
   it('ask mode prompts via the approver when no rule matches', async () => {
     let asked = false
-    const approver: Approver = async () => { asked = true; return true }
+    const approver: Approver = () => { asked = true; return Promise.resolve(true) }
     const checker = new PermissionChecker('ask', [], approver)
     const d = await checker.check({ tool: 'Read', input: { file_path: '/a' } })
     expect(asked).toBe(true)
@@ -54,7 +57,7 @@ describe('PermissionChecker — modes', () => {
 describe('PermissionChecker — rules', () => {
   it('default rule escalates rm -rf to ask even in auto mode', async () => {
     let asked = false
-    const approver: Approver = async () => { asked = true; return false }
+    const approver: Approver = () => { asked = true; return Promise.resolve(false) }
     const checker = new PermissionChecker('auto', [], approver)
     const d = await checker.check({ tool: 'Bash', input: { command: 'rm -rf /tmp/x' } })
     expect(asked).toBe(true)
@@ -78,7 +81,7 @@ describe('PermissionChecker — rules', () => {
   })
 
   it('approver rejection yields a denied decision', async () => {
-    const approver: Approver = async () => false
+    const approver: Approver = () => Promise.resolve(false)
     const checker = new PermissionChecker('ask', [], approver)
     const d = await checker.check({ tool: 'Write', input: { file_path: '/a' } })
     expect(d.allowed).toBe(false)
@@ -86,7 +89,7 @@ describe('PermissionChecker — rules', () => {
 
   it('first matching rule wins (consumer rule before default)', async () => {
     // Consumer explicitly allows curl; the default rule would escalate to ask.
-    const approver: Approver = async () => true
+    const approver: Approver = () => Promise.resolve(true)
     const checker = new PermissionChecker('auto', [
       { tool: 'Bash', pattern: 'curl ', action: 'allow' },
     ], approver)
@@ -95,7 +98,7 @@ describe('PermissionChecker — rules', () => {
   })
 
   it('a thrown approver error is caught and treated as deny', async () => {
-    const approver: Approver = async () => { throw new Error('boom') }
+    const approver: Approver = () => Promise.reject(new Error('boom'))
     const checker = new PermissionChecker('ask', [], approver)
     const d = await checker.check({ tool: 'Read', input: { file_path: '/a' } })
     expect(d.allowed).toBe(false)

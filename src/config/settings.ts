@@ -98,10 +98,16 @@ function mergeSettings(a: OvogoSettings, b: OvogoSettings): OvogoSettings {
     hooks: {
       PreToolCall: [...(a.hooks?.PreToolCall ?? []), ...(b.hooks?.PreToolCall ?? [])],
       PostToolCall: [...(a.hooks?.PostToolCall ?? []), ...(b.hooks?.PostToolCall ?? [])],
-      UserPromptSubmit: [...(a.hooks?.UserPromptSubmit ?? []), ...(b.hooks?.UserPromptSubmit ?? [])],
+      UserPromptSubmit: [
+        ...(a.hooks?.UserPromptSubmit ?? []),
+        ...(b.hooks?.UserPromptSubmit ?? []),
+      ],
       OnError: [...(a.hooks?.OnError ?? []), ...(b.hooks?.OnError ?? [])],
       OnComplete: [...(a.hooks?.OnComplete ?? []), ...(b.hooks?.OnComplete ?? [])],
-      OnContextOverflow: [...(a.hooks?.OnContextOverflow ?? []), ...(b.hooks?.OnContextOverflow ?? [])],
+      OnContextOverflow: [
+        ...(a.hooks?.OnContextOverflow ?? []),
+        ...(b.hooks?.OnContextOverflow ?? []),
+      ],
     },
     taskContext: mergedTaskContext,
   }

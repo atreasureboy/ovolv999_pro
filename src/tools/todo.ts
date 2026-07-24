@@ -23,9 +23,7 @@ function renderTodoList(): string {
   if (todoList.length === 0) return '(no tasks)'
   return todoList
     .map((item) => {
-      const icon =
-        item.status === 'completed' ? '✓' :
-        item.status === 'in_progress' ? '◆' : '○'
+      const icon = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '◆' : '○'
       const pri = item.priority === 'high' ? '[H]' : item.priority === 'low' ? '[L]' : '   '
       return `${icon} ${pri} ${item.content}`
     })
@@ -103,16 +101,16 @@ Always update status as you work: set in_progress before starting a task, comple
 
     // Update: merge by id. If id doesn't exist, add it.
     // If todos covers ALL existing ids, treat as replace.
-    const incomingIds = new Set(todos.map(t => t.id))
-    const allExistingCovered = todoList.every(t => incomingIds.has(t.id))
+    const incomingIds = new Set(todos.map((t) => t.id))
+    const allExistingCovered = todoList.every((t) => incomingIds.has(t.id))
 
     if (todoList.length === 0 || allExistingCovered) {
       // Full replace
-      todoList = todos.map(t => ({ ...t }))
+      todoList = todos.map((t) => ({ ...t }))
     } else {
       // Partial update — merge by id
       for (const updated of todos) {
-        const existing = todoList.find(t => t.id === updated.id)
+        const existing = todoList.find((t) => t.id === updated.id)
         if (existing) {
           existing.status = updated.status
           existing.priority = updated.priority

@@ -14,13 +14,13 @@ import { mkdirSync } from 'fs'
 import { join } from 'path'
 
 const MAX_OUTPUT_LENGTH = 30_000
-const DEFAULT_TIMEOUT_MS = 1_800_000  // 30 min — long-running commands default
-const MAX_TIMEOUT_MS = 14_400_000    // 4 h — max for very long tasks
-const MIN_TIMEOUT_MS = 1_000         // 1 s — sub-second timeouts are almost
-                                      // always a unit mistake (LLM passing
-                                      // seconds, e.g. 300 meaning "5 min").
-                                      // Clamp up to default instead of killing
-                                      // the command instantly.
+const DEFAULT_TIMEOUT_MS = 1_800_000 // 30 min — long-running commands default
+const MAX_TIMEOUT_MS = 14_400_000 // 4 h — max for very long tasks
+const MIN_TIMEOUT_MS = 1_000 // 1 s — sub-second timeouts are almost
+// always a unit mistake (LLM passing
+// seconds, e.g. 300 meaning "5 min").
+// Clamp up to default instead of killing
+// the command instantly.
 
 // Shell detection — OVOGO_SHELL env overrides; otherwise bash (resolves via PATH
 // on Windows if Git Bash/WSL is installed, /bin/bash on Unix).
@@ -31,7 +31,7 @@ export interface BashInput {
   timeout?: number
   run_in_background?: boolean
   description?: string
-  follow_mode?: boolean   // Stream output to user's tmux pane for spectator view
+  follow_mode?: boolean // Stream output to user's tmux pane for spectator view
 }
 
 function truncateOutput(output: string, maxLen: number): string {
@@ -72,7 +72,8 @@ export class BashTool implements Tool {
           },
           follow_mode: {
             type: 'boolean',
-            description: 'If true, stream output to a tmux pane for real-time user viewing (spectator mode). The LLM still receives the full output after completion.',
+            description:
+              'If true, stream output to a tmux pane for real-time user viewing (spectator mode). The LLM still receives the full output after completion.',
           },
         },
         required: ['command'],
@@ -88,9 +89,7 @@ export class BashTool implements Tool {
     }
 
     const timeoutMs = Math.min(
-      typeof timeout === 'number' && timeout >= MIN_TIMEOUT_MS
-        ? timeout
-        : DEFAULT_TIMEOUT_MS,
+      typeof timeout === 'number' && timeout >= MIN_TIMEOUT_MS ? timeout : DEFAULT_TIMEOUT_MS,
       MAX_TIMEOUT_MS,
     )
 
@@ -98,15 +97,22 @@ export class BashTool implements Tool {
     if (run_in_background) {
       // Auto-redirect stdout/stderr to a session-scoped log file so output
       // is never lost even if the caller forgets to add `> file 2>&1`.
-      const bgLogDir = context.sessionDir ? join(context.sessionDir, '.bg_logs') : join(context.cwd, '.bg_logs')
-      try { mkdirSync(bgLogDir, { recursive: true }) } catch { /* best-effort */ }
+      const bgLogDir = context.sessionDir
+        ? join(context.sessionDir, '.bg_logs')
+        : join(context.cwd, '.bg_logs')
+      try {
+        mkdirSync(bgLogDir, { recursive: true })
+      } catch {
+        /* best-effort */
+      }
 
       const ts = Date.now()
       const safeCmd = command.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40)
       const logFile = join(bgLogDir, `${ts}_${safeCmd}.log`)
 
       // Append redirect if the caller didn't already redirect
-      const alreadyRedirected = command.includes('>') || command.includes('2>&1') || command.includes('/dev/null')
+      const alreadyRedirected =
+        command.includes('>') || command.includes('2>&1') || command.includes('/dev/null')
       const actualCommand = alreadyRedirected ? command : `${command} >> "${logFile}" 2>&1`
 
       const child = spawn(SHELL, ['-c', actualCommand], {
@@ -135,8 +141,14 @@ export class BashTool implements Tool {
       let followCleanup: (() => void) | null = null
       let followModeHint = ''
       if (follow_mode) {
-        const followLogDir = context.sessionDir ? join(context.sessionDir, '.bg_logs') : join(context.cwd, '.bg_logs')
-        try { mkdirSync(followLogDir, { recursive: true }) } catch { /* best-effort */ }
+        const followLogDir = context.sessionDir
+          ? join(context.sessionDir, '.bg_logs')
+          : join(context.cwd, '.bg_logs')
+        try {
+          mkdirSync(followLogDir, { recursive: true })
+        } catch {
+          /* best-effort */
+        }
         const ts = Date.now()
         const safeCmd = command.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40)
         const followLogFile = join(followLogDir, `${ts}_${safeCmd}_follow.log`)
@@ -152,28 +164,46 @@ export class BashTool implements Tool {
             cwd: context.cwd,
             detached: true,
           })
-          spawn('tmux', ['send-keys', '-t', tmuxSessionName, `tail -n +1 -f "${followLogFile}"`, 'Enter'], {
-            cwd: context.cwd,
-          })
+          spawn(
+            'tmux',
+            ['send-keys', '-t', tmuxSessionName, `tail -n +1 -f "${followLogFile}"`, 'Enter'],
+            {
+              cwd: context.cwd,
+            },
+          )
           // Try to join the follow pane into the user's current tmux window
           try {
-            const currentTmux = process.env.TMUX_PANE ? process.env.TMUX?.split(',')[0]?.replace(/^\//, '') : null
+            const currentTmux = process.env.TMUX_PANE
+              ? process.env.TMUX?.split(',')[0]?.replace(/^\//, '')
+              : null
             if (currentTmux) {
-              spawn('tmux', ['join-pane', '-t', `${currentTmux}`, '-s', `${tmuxSessionName}`, '-l', '15'], {
-                cwd: context.cwd,
-              })
+              spawn(
+                'tmux',
+                ['join-pane', '-t', `${currentTmux}`, '-s', `${tmuxSessionName}`, '-l', '15'],
+                {
+                  cwd: context.cwd,
+                },
+              )
               paneJoined = true
             }
-          } catch { /* best-effort: user can manually attach */ }
+          } catch {
+            /* best-effort: user can manually attach */
+          }
 
           followModeHint = paneJoined
             ? '[观战面板已嵌入当前 tmux 窗口底部]'
             : `[观战面板: tmux attach -t ${tmuxSessionName}]`
 
           followCleanup = () => {
-            try { spawn('tmux', ['kill-session', '-t', tmuxSessionName], { detached: true }) } catch { /* ignore */ }
+            try {
+              spawn('tmux', ['kill-session', '-t', tmuxSessionName], { detached: true })
+            } catch {
+              /* ignore */
+            }
           }
-        } catch { /* tmux not available, degrade gracefully */ }
+        } catch {
+          /* tmux not available, degrade gracefully */
+        }
       }
 
       const child = exec(
@@ -207,8 +237,13 @@ export class BashTool implements Tool {
 
           if (!err) {
             const combined = [stdout, stderr].filter(Boolean).join('\n').trimEnd()
-            const prefix = follow_mode ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n` : ''
-            resolve({ content: truncateOutput(prefix + combined, MAX_OUTPUT_LENGTH) || '(no output)', isError: false })
+            const prefix = follow_mode
+              ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n`
+              : ''
+            resolve({
+              content: truncateOutput(prefix + combined, MAX_OUTPUT_LENGTH) || '(no output)',
+              isError: false,
+            })
             return
           }
 
@@ -226,12 +261,20 @@ export class BashTool implements Tool {
           }
 
           // Non-zero exit — provide stdout+stderr so the LLM can diagnose
-          const out = [nodeErr.stdout ?? stdout, nodeErr.stderr ?? stderr].filter(Boolean).join('\n').trimEnd()
+          const out = [nodeErr.stdout ?? stdout, nodeErr.stderr ?? stderr]
+            .filter(Boolean)
+            .join('\n')
+            .trimEnd()
           const exitCode = nodeErr.code ?? 1
-          const prefix = follow_mode ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n` : ''
+          const prefix = follow_mode
+            ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n`
+            : ''
           resolve({
-            content: truncateOutput(prefix + `Exit code: ${exitCode}\n${out}`, MAX_OUTPUT_LENGTH).trimEnd(),
-            isError: false,  // non-zero exit is not necessarily fatal
+            content: truncateOutput(
+              prefix + `Exit code: ${exitCode}\n${out}`,
+              MAX_OUTPUT_LENGTH,
+            ).trimEnd(),
+            isError: false, // non-zero exit is not necessarily fatal
           })
         },
       )
@@ -245,13 +288,25 @@ export class BashTool implements Tool {
         const pid = child.pid
         if (pid !== undefined) {
           // Kill the process group (includes any subshells spawned by the command)
-          try { process.kill(-pid, 'SIGTERM') } catch {
-            try { child.kill('SIGTERM') } catch { /* ignore */ }
+          try {
+            process.kill(-pid, 'SIGTERM')
+          } catch {
+            try {
+              child.kill('SIGTERM')
+            } catch {
+              /* ignore */
+            }
           }
           // SIGKILL fallback after 5 s for stubborn processes
           setTimeout(() => {
-            try { process.kill(-pid, 'SIGKILL') } catch {
-              try { child.kill('SIGKILL') } catch { /* ignore */ }
+            try {
+              process.kill(-pid, 'SIGKILL')
+            } catch {
+              try {
+                child.kill('SIGKILL')
+              } catch {
+                /* ignore */
+              }
             }
           }, 5_000)
         }

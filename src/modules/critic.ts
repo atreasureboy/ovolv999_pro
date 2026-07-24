@@ -9,7 +9,12 @@
  */
 
 import type OpenAI from 'openai'
-import type { AgentModule, ModuleBootResult, ModuleIterationContext, ModuleIterationResult } from '../core/module.js'
+import type {
+  AgentModule,
+  ModuleBootResult,
+  ModuleIterationContext,
+  ModuleIterationResult,
+} from '../core/module.js'
 import {
   CRITIC_INTERVAL,
   CRITIC_MIN_ITERATIONS,

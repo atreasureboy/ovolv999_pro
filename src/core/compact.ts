@@ -21,8 +21,8 @@ export const MODEL_MAX_CONTEXT_TOKENS = 200_000
 // Percentage-based thresholds — the SINGLE source of truth for context pressure.
 // Both the engine (evaluateContextBudget) and tests read these constants so the
 // warn/compact boundaries can never drift between modules.
-export const CONTEXT_WARN_PCT    = 0.70   // 70%  → display yellow warning
-export const CONTEXT_COMPACT_PCT = 0.85   // 85%  → force auto-compact
+export const CONTEXT_WARN_PCT = 0.7 // 70%  → display yellow warning
+export const CONTEXT_COMPACT_PCT = 0.85 // 85%  → force auto-compact
 
 /** Compression strategy selected based on context pressure */
 export type CompressionStrategy = 'proportional' | 'priority' | 'aggressive'
@@ -88,7 +88,7 @@ export function calculateContextState(
     systemPromptTokens,
     maxTokens,
     pct,
-    shouldWarn:   pct >= CONTEXT_WARN_PCT,
+    shouldWarn: pct >= CONTEXT_WARN_PCT,
     shouldCompact: pct >= CONTEXT_COMPACT_PCT,
     strategy: getCompressionStrategy(pct),
   }
@@ -164,9 +164,7 @@ function extractSummary(text: string): string {
   }
 
   // Fall back: strip <analysis> block and return the rest
-  return text
-    .replace(/<analysis>[\s\S]*?<\/analysis>/i, '')
-    .trim()
+  return text.replace(/<analysis>[\s\S]*?<\/analysis>/i, '').trim()
 }
 
 /**
@@ -180,7 +178,7 @@ function serializeMessages(messages: OpenAIMessage[]): string {
       parts.push(`[${role}]: ${msg.content}`)
     } else if (msg.content === null && msg.tool_calls?.length) {
       const calls = msg.tool_calls
-        .map(tc => `  → ${tc.function.name}(${tc.function.arguments.slice(0, 200)})`)
+        .map((tc) => `  → ${tc.function.name}(${tc.function.arguments.slice(0, 200)})`)
         .join('\n')
       parts.push(`[ASSISTANT tool calls]:\n${calls}`)
     }
@@ -223,10 +221,7 @@ export async function maybeCompact(
     // extend to include all results for the last assistant tool_calls.
     // Cap at messages.length - 2 to always keep at least 2 recent messages.
     const maxSplit = messages.length - 2
-    while (
-      splitPoint < maxSplit &&
-      messages[splitPoint]?.role === 'tool'
-    ) {
+    while (splitPoint < maxSplit && messages[splitPoint]?.role === 'tool') {
       splitPoint++
     }
   }

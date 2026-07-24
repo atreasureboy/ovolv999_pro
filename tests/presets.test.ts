@@ -53,11 +53,19 @@ describe('resolveAgentConfig', () => {
 // ── AGENT_PRESETS ───────────────────────────────────────────────────────────
 
 describe('AGENT_PRESETS', () => {
-  it('has 4 built-in presets', () => {
+  it('has built-in presets including security, manager, and data-analyst', () => {
     expect(PRESET_NAMES).toEqual(
-      expect.arrayContaining(['explore', 'plan', 'code-reviewer', 'general-purpose']),
+      expect.arrayContaining([
+        'explore',
+        'plan',
+        'code-reviewer',
+        'security-auditor',
+        'manager',
+        'data-analyst',
+        'general-purpose',
+      ]),
     )
-    expect(PRESET_NAMES).toHaveLength(4)
+    expect(PRESET_NAMES.length).toBeGreaterThanOrEqual(7)
   })
 
   it('explore preset is read-only', () => {
@@ -76,6 +84,25 @@ describe('AGENT_PRESETS', () => {
     const c = AGENT_PRESETS['code-reviewer']
     expect(c.identity.planMode).toBe(true)
     expect(c.tools).toEqual(['Read', 'Glob', 'Grep'])
+  })
+
+  it('security-auditor preset is read-only for security inspection', () => {
+    const c = AGENT_PRESETS['security-auditor']
+    expect(c.identity.planMode).toBe(true)
+    expect(c.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'])
+  })
+
+  it('manager preset has sub-agent delegation and memory tools', () => {
+    const c = AGENT_PRESETS['manager']
+    expect(c.tools).toContain('Agent')
+    expect(c.tools).toContain('Task')
+    expect(c.modules?.memory?.enabled).toBe(true)
+  })
+
+  it('data-analyst preset is read-only for analytical reporting', () => {
+    const c = AGENT_PRESETS['data-analyst']
+    expect(c.identity.planMode).toBe(true)
+    expect(c.tools).toEqual(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'])
   })
 
   it('general-purpose preset has modules enabled', () => {

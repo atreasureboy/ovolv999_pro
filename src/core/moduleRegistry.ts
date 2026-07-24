@@ -35,7 +35,7 @@ export class ModuleRegistry {
   resolve(enabledNames: string[], ctx: ModuleContext): AgentModule[] {
     const resolved: AgentModule[] = []
     const seen = new Set<string>()
-    const inProgress = new Set<string>()  // cycle detection
+    const inProgress = new Set<string>() // cycle detection
 
     const resolveOne = (name: string, chain: string[]): void => {
       if (seen.has(name)) return

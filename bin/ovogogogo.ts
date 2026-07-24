@@ -48,7 +48,9 @@ import { fileURLToPath } from 'url'
         const val = t.slice(eq + 1).trim()
         if (!process.env[key]) process.env[key] = val
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
     break
   }
 }
@@ -154,16 +156,38 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
     switch (arg) {
-      case '--help': case '-h': help = true; break
-      case '--version': case '-v': case '-V': version = true; break
-      case '--model': case '-m': model = args[++i] ?? model; break
-      case '--max-iter': maxIter = parseInt(args[++i] ?? '30', 10); break
-      case '--cwd': cwd = args[++i] ?? cwd; break
-      case '--resume': resume = args[++i] ?? 'last'; break
-      case '--permission': case '-p':
-        permission = (args[++i] as 'auto' | 'ask' | 'deny') ?? permission; break
-      case '--no-mcp': noMcp = true; break
-      case '--sessions': listSessions = true; break
+      case '--help':
+      case '-h':
+        help = true
+        break
+      case '--version':
+      case '-v':
+      case '-V':
+        version = true
+        break
+      case '--model':
+      case '-m':
+        model = args[++i] ?? model
+        break
+      case '--max-iter':
+        maxIter = parseInt(args[++i] ?? '30', 10)
+        break
+      case '--cwd':
+        cwd = args[++i] ?? cwd
+        break
+      case '--resume':
+        resume = args[++i] ?? 'last'
+        break
+      case '--permission':
+      case '-p':
+        permission = (args[++i] as 'auto' | 'ask' | 'deny') ?? permission
+        break
+      case '--no-mcp':
+        noMcp = true
+        break
+      case '--sessions':
+        listSessions = true
+        break
       default:
         if (!arg.startsWith('-')) task = task ? task + ' ' + arg : arg
     }
@@ -226,7 +250,7 @@ REPL COMMANDS
   /exit          Exit ovogogogo
 
 SKILLS (${skills.size} available)
-${[...skills.values()].map(s => `  /${s.name.padEnd(14)} ${s.description}`).join('\n')}
+${[...skills.values()].map((s) => `  /${s.name.padEnd(14)} ${s.description}`).join('\n')}
 
 HOOKS (configure in .ovogo/settings.json)
   PreToolCall       Runs before each tool call   (env: OVOGO_TOOL_NAME, OVOGO_TOOL_INPUT)
@@ -249,11 +273,7 @@ EXAMPLES
 // ─────────────────────────────────────────────────────────────
 
 function createSessionDir(cwd: string): string {
-  const ts = new Date()
-    .toISOString()
-    .replace('T', '_')
-    .replace(/:/g, '')
-    .slice(0, 15)   // YYYYMMDD_HHMMSS
+  const ts = new Date().toISOString().replace('T', '_').replace(/:/g, '').slice(0, 15) // YYYYMMDD_HHMMSS
 
   const dirName = `session_${ts}`
   const sessionDir = join(cwd, 'sessions', dirName)
@@ -273,11 +293,7 @@ function updateProgressLog(cwd: string, step: string, nextAction: string): void 
       timestamp: new Date().toISOString(),
       cwd,
     }
-    writeFileSync(
-      resolve(cwd, 'ovogo_progress.json'),
-      JSON.stringify(log, null, 2),
-      'utf8',
-    )
+    writeFileSync(resolve(cwd, 'ovogo_progress.json'), JSON.stringify(log, null, 2), 'utf8')
   } catch {
     // best-effort
   }
@@ -391,7 +407,9 @@ function handleBuiltin(
       for (const [source, list] of bySource) {
         process.stdout.write(`  \x1b[2m── ${source} ──\x1b[0m\n`)
         for (const s of list) {
-          process.stdout.write(`  \x1b[36m/${s.name.padEnd(16)}\x1b[0m \x1b[2m${s.description}\x1b[0m\n`)
+          process.stdout.write(
+            `  \x1b[36m/${s.name.padEnd(16)}\x1b[0m \x1b[2m${s.description}\x1b[0m\n`,
+          )
         }
       }
       renderer.newline()
@@ -402,14 +420,14 @@ function handleBuiltin(
       renderer.newline()
       const COMMANDS = {
         '/plan <task>': 'Plan mode — analyze then confirm before execute',
-        '/skills':      'List available skills',
-        '/<skill>':     'Run a skill (e.g. /commit, /review)',
-        '/clear':       'Clear conversation history',
-        '/history':     'Show message count in session',
-        '/model':       'Show current model',
-        '/cwd':         'Show working directory',
-        '/help':        'Show this help',
-        '/exit':        'Exit ovogogogo',
+        '/skills': 'List available skills',
+        '/<skill>': 'Run a skill (e.g. /commit, /review)',
+        '/clear': 'Clear conversation history',
+        '/history': 'Show message count in session',
+        '/model': 'Show current model',
+        '/cwd': 'Show working directory',
+        '/help': 'Show this help',
+        '/exit': 'Exit ovogogogo',
       }
       for (const [c, desc] of Object.entries(COMMANDS)) {
         process.stdout.write(`  \x1b[36m${c.padEnd(20)}\x1b[0m ${desc}\n`)
@@ -443,7 +461,11 @@ async function runRepl(
   skills: Map<string, Skill>,
   hookRunner: { runUserPromptSubmit: (p: string) => void },
   input: InputHandler,
-  consolidate?: { config: EngineConfig; semanticMemory: SemanticMemory; episodicMemory: EpisodicMemory },
+  consolidate?: {
+    config: EngineConfig
+    semanticMemory: SemanticMemory
+    episodicMemory: EpisodicMemory
+  },
   initialHistory?: OpenAIMessage[],
 ): Promise<void> {
   const history: OpenAIMessage[] = []
@@ -496,15 +518,18 @@ async function runRepl(
    * Run one task (or task continuation) through the engine.
    * Handles the soft-interrupt resume loop internally.
    */
-  async function runTask(prompt: string, taskHistory: OpenAIMessage[], startMs: number): Promise<void> {
+  async function runTask(
+    prompt: string,
+    taskHistory: OpenAIMessage[],
+    startMs: number,
+  ): Promise<void> {
     running = true
 
-    let currentPrompt   = prompt
-    let currentHistory  = taskHistory
+    let currentPrompt = prompt
+    let currentHistory = taskHistory
 
     try {
       while (true) {
-
         const { result, newHistory } = await engine.runTurn(currentPrompt, currentHistory)
 
         // Update shared history with latest turn
@@ -599,7 +624,9 @@ async function runRepl(
         const expandedPrompt = expandSkillPrompt(skill, args)
         renderer.info(`Running skill: /${skill.name}${args ? ' ' + args : ''}`)
         hookRunner.runUserPromptSubmit(trimmed)
-        renderer.humanPrompt(expandedPrompt.split('\n')[0] + (expandedPrompt.includes('\n') ? ' …' : ''))
+        renderer.humanPrompt(
+          expandedPrompt.split('\n')[0] + (expandedPrompt.includes('\n') ? ' …' : ''),
+        )
         updateProgressLog(cwd, 'running', `/${skill.name}`)
 
         await runTask(expandedPrompt, [...history], Date.now())
@@ -623,15 +650,24 @@ async function runRepl(
   if (consolidate) {
     try {
       const OpenAI = (await import('openai')).default
-      const client = new OpenAI({ apiKey: consolidate.config.apiKey, baseURL: consolidate.config.baseURL })
+      const client = new OpenAI({
+        apiKey: consolidate.config.apiKey,
+        baseURL: consolidate.config.baseURL,
+      })
       const result = await consolidateSession(
-        client, consolidate.config.model,
-        consolidate.episodicMemory, consolidate.semanticMemory,
+        client,
+        consolidate.config.model,
+        consolidate.episodicMemory,
+        consolidate.semanticMemory,
       )
       if (result.knowledgeExtracted > 0) {
-        renderer.info(`Memory consolidated: ${result.knowledgeExtracted} entries from ${result.episodes} episodes`)
+        renderer.info(
+          `Memory consolidated: ${result.knowledgeExtracted} entries from ${result.episodes} episodes`,
+        )
       }
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
 
   process.exit(0)
@@ -670,7 +706,18 @@ async function runTask(
 // ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { task, model: modelArg, maxIter: maxIterArg, cwd: rawCwd, help, version, resume, permission: permissionArg, noMcp, listSessions: listSessionsFlag } = parseArgs(process.argv)
+  const {
+    task,
+    model: modelArg,
+    maxIter: maxIterArg,
+    cwd: rawCwd,
+    help,
+    version,
+    resume,
+    permission: permissionArg,
+    noMcp,
+    listSessions: listSessionsFlag,
+  } = parseArgs(process.argv)
   const cwd = resolve(rawCwd)
 
   // --sessions: list resumable sessions and exit
@@ -681,7 +728,9 @@ async function main(): Promise<void> {
       process.stdout.write('  (none)\n')
     } else {
       for (const s of sessions) {
-        process.stdout.write(`  ${s.name}  ${s.savedAt}  ${s.messageCount} msgs${s.model ? '  ' + s.model : ''}\n`)
+        process.stdout.write(
+          `  ${s.name}  ${s.savedAt}  ${s.messageCount} msgs${s.model ? '  ' + s.model : ''}\n`,
+        )
       }
       process.stdout.write('\nResume with: --resume <name> | --resume last\n')
     }
@@ -728,7 +777,9 @@ async function main(): Promise<void> {
   const renderer = new Renderer()
   renderer.banner(VERSION, model)
   renderer.info(`cwd: ${cwd}`)
-  renderer.info(`permission: ${permissionMode} (${permissionRules.length} rule${permissionRules.length !== 1 ? 's' : ''}) · context: ~${Math.round(maxCtxTokens / 1000)}k tokens`)
+  renderer.info(
+    `permission: ${permissionMode} (${permissionRules.length} rule${permissionRules.length !== 1 ? 's' : ''}) · context: ~${Math.round(maxCtxTokens / 1000)}k tokens`,
+  )
 
   // Shared input handler — used by the REPL and by the interactive permission
   // approver (so a single readline owns stdin, avoiding interface conflicts).
@@ -748,19 +799,27 @@ async function main(): Promise<void> {
     process.stdout.write(`  允许执行? [y]es / [n]o / [a]lways 允许此类: `)
     const { text } = await input.readLine('')
     const a = text.trim().toLowerCase()
-    if (a === 'a' || a === 'always') { alwaysAllow.add(ruleKey); return true }
+    if (a === 'a' || a === 'always') {
+      alwaysAllow.add(ruleKey)
+      return true
+    }
     return a === 'y' || a === 'yes'
   }
   const permissionChecker = new PermissionChecker(permissionMode, permissionRules, approver)
 
   // Load settings + hooks
   const settings = loadSettings(cwd)
-  const hookRunner = settings.hooks
-    ? new HookRunner(settings.hooks)
-    : new NoopHookRunner()
+  const hookRunner = settings.hooks ? new HookRunner(settings.hooks) : new NoopHookRunner()
 
-  const hookTypes = ['PreToolCall', 'PostToolCall', 'UserPromptSubmit', 'OnError', 'OnComplete', 'OnContextOverflow'] as const
-  const hasHooks = hookTypes.some(t => (settings.hooks?.[t]?.length ?? 0) > 0)
+  const hookTypes = [
+    'PreToolCall',
+    'PostToolCall',
+    'UserPromptSubmit',
+    'OnError',
+    'OnComplete',
+    'OnContextOverflow',
+  ] as const
+  const hasHooks = hookTypes.some((t) => (settings.hooks?.[t]?.length ?? 0) > 0)
   if (hasHooks) {
     const count = hookTypes.reduce((sum, t) => sum + (settings.hooks?.[t]?.length ?? 0), 0)
     renderer.info(`Hooks: ${count} hook(s) loaded from .ovogo/settings.json`)
@@ -783,7 +842,9 @@ async function main(): Promise<void> {
   const memoryDir = getMemoryDir(cwd)
   const memStats = getMemoryStats(memoryDir)
   if (memStats.hasIndex) {
-    renderer.info(`Memory: ${memStats.entryCount} entr${memStats.entryCount !== 1 ? 'ies' : 'y'} — ${memoryDir}`)
+    renderer.info(
+      `Memory: ${memStats.entryCount} entr${memStats.entryCount !== 1 ? 'ies' : 'y'} — ${memoryDir}`,
+    )
   } else {
     renderer.info(`Memory: initialized — ${memoryDir}`)
   }
@@ -821,14 +882,19 @@ async function main(): Promise<void> {
   const episodicMemory = new EpisodicMemory(projectSlugDir)
 
   // Register capability modules (factories read from EngineConfig at resolve time)
-  globalModuleRegistry.register('memory', (ctx) =>
-    new MemoryModule(ctx.config.semanticMemory!, ctx.config.episodicMemory!))
-  globalModuleRegistry.register('critic', (ctx) =>
-    new CriticModule(ctx.client, ctx.model, ctx.config.planMode ?? false))
-  globalModuleRegistry.register('workspace', (ctx) =>
-    new WorkspaceModule(ctx.config.sessionDir))
-  globalModuleRegistry.register('reflection', (ctx) =>
-    new ReflectionModule(ctx.client, ctx.model, ctx.config.semanticMemory!))
+  globalModuleRegistry.register(
+    'memory',
+    (ctx) => new MemoryModule(ctx.config.semanticMemory!, ctx.config.episodicMemory!),
+  )
+  globalModuleRegistry.register(
+    'critic',
+    (ctx) => new CriticModule(ctx.client, ctx.model, ctx.config.planMode ?? false),
+  )
+  globalModuleRegistry.register('workspace', (ctx) => new WorkspaceModule(ctx.config.sessionDir))
+  globalModuleRegistry.register(
+    'reflection',
+    (ctx) => new ReflectionModule(ctx.client, ctx.model, ctx.config.semanticMemory!),
+  )
 
   const maxCtxTokensFinal = maxCtxTokens
 
@@ -878,8 +944,12 @@ async function main(): Promise<void> {
     systemPrompt,
     sessionDir,
     maxContextTokens: maxCtxTokensFinal,
-    temperature: process.env.OVOGO_TEMPERATURE ? parseFloat(process.env.OVOGO_TEMPERATURE) : undefined,
-    maxOutputTokens: process.env.OVOGO_MAX_OUTPUT_TOKENS ? parseInt(process.env.OVOGO_MAX_OUTPUT_TOKENS, 10) : undefined,
+    temperature: process.env.OVOGO_TEMPERATURE
+      ? parseFloat(process.env.OVOGO_TEMPERATURE)
+      : undefined,
+    maxOutputTokens: process.env.OVOGO_MAX_OUTPUT_TOKENS
+      ? parseInt(process.env.OVOGO_MAX_OUTPUT_TOKENS, 10)
+      : undefined,
     eventLog,
     semanticMemory,
     episodicMemory,
@@ -894,7 +964,7 @@ async function main(): Promise<void> {
   const planConfig: EngineConfig = {
     ...config,
     planMode: true,
-    enabledModules: enabledModules.filter(m => m !== 'critic' && m !== 'reflection'),
+    enabledModules: enabledModules.filter((m) => m !== 'critic' && m !== 'reflection'),
   }
 
   const engine = new ExecutionEngine(config, renderer)
@@ -915,8 +985,14 @@ async function main(): Promise<void> {
     mcpResult?.close().catch(() => undefined)
   }
   process.on('exit', cleanup)
-  process.on('SIGTERM', () => { cleanup(); process.exit(0) })
-  process.on('SIGHUP',  () => { cleanup(); process.exit(0) })
+  process.on('SIGTERM', () => {
+    cleanup()
+    process.exit(0)
+  })
+  process.on('SIGHUP', () => {
+    cleanup()
+    process.exit(0)
+  })
 
   // Pipe input?
   if (!process.stdin.isTTY) {
@@ -938,9 +1014,21 @@ async function main(): Promise<void> {
   }
 
   // Interactive REPL
-  await runRepl(engine, planConfig, renderer, cwd, skills, hookRunner, input, {
-    config, semanticMemory, episodicMemory,
-  }, resumedHistory)
+  await runRepl(
+    engine,
+    planConfig,
+    renderer,
+    cwd,
+    skills,
+    hookRunner,
+    input,
+    {
+      config,
+      semanticMemory,
+      episodicMemory,
+    },
+    resumedHistory,
+  )
 }
 
 main().catch((err: unknown) => {

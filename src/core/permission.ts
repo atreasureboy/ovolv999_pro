@@ -99,8 +99,16 @@ export function fingerprint(tool: string, input: Record<string, unknown>): strin
       return str(input.command)
     case 'Write':
     case 'Edit':
+    case 'MultiEdit':
     case 'Read':
-      return str(input.file_path)
+      return str(
+        input.file_path ??
+          input.path ??
+          input.file ??
+          input.filename ??
+          input.target_file ??
+          input.target,
+      )
     case 'Glob':
       return str(input.pattern)
     case 'Grep':
@@ -109,7 +117,10 @@ export function fingerprint(tool: string, input: Record<string, unknown>): strin
       return str(input.description)
     default:
       // Best-effort: flatten values
-      return Object.values(input).map(v => str(v)).join(' ').slice(0, 200)
+      return Object.values(input)
+        .map((v) => str(v))
+        .join(' ')
+        .slice(0, 200)
   }
 }
 
@@ -156,7 +167,7 @@ export class PermissionChecker {
   }
 
   private matchRule(tool: string, fp: string): PermissionRule | undefined {
-    return this.rules.find(r => {
+    return this.rules.find((r) => {
       if (r.tool && r.tool !== '*' && r.tool !== tool) return false
       if (r.pattern && !fp.includes(r.pattern)) return false
       return true
@@ -166,10 +177,13 @@ export class PermissionChecker {
   private resolveAction(ruleAction?: PermissionAction): PermissionAction {
     if (ruleAction) return ruleAction
     switch (this.mode) {
-      case 'deny': return 'deny'
-      case 'ask':  return 'ask'
+      case 'deny':
+        return 'deny'
+      case 'ask':
+        return 'ask'
       case 'auto':
-      default:     return 'allow'
+      default:
+        return 'allow'
     }
   }
 }

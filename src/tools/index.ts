@@ -7,6 +7,7 @@ import { BashTool } from './bash.js'
 import { FileReadTool } from './fileRead.js'
 import { FileWriteTool } from './fileWrite.js'
 import { FileEditTool } from './fileEdit.js'
+import { FileMultiEditTool } from './fileMultiEdit.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { TodoWriteTool } from './todo.js'
@@ -14,6 +15,7 @@ import { WebFetchTool } from './webFetch.js'
 import { WebSearchTool } from './webSearch.js'
 import { AgentTool } from './agent.js'
 import { TmuxSessionTool } from './tmuxSession.js'
+import { TaskTool } from './task.js'
 
 export function createTools(extraTools: Tool[] = []): Tool[] {
   return [
@@ -21,6 +23,7 @@ export function createTools(extraTools: Tool[] = []): Tool[] {
     new FileReadTool(),
     new FileWriteTool(),
     new FileEditTool(),
+    new FileMultiEditTool(),
     new GlobTool(),
     new GrepTool(),
     new TodoWriteTool(),
@@ -28,6 +31,7 @@ export function createTools(extraTools: Tool[] = []): Tool[] {
     new WebSearchTool(),
     new AgentTool(),
     new TmuxSessionTool(),
+    new TaskTool(),
     ...extraTools,
   ]
 }
@@ -45,6 +49,7 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  FileMultiEditTool,
   GlobTool,
   GrepTool,
   TodoWriteTool,
@@ -52,4 +57,5 @@ export {
   WebSearchTool,
   AgentTool,
   TmuxSessionTool,
+  TaskTool,
 }

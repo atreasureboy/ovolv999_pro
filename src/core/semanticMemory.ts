@@ -1,13 +1,10 @@
 /**
- * SemanticMemory — cross-turn knowledge persistence with incremental index.
+ * SemanticMemory — Cross-turn knowledge persistence with vector & hybrid index.
  *
- * Improvements over the previous version:
- * 1. In-memory index — entries are tracked as they're written; disk reads are
- *    lazy (only on first query or after explicit reload).
- * 2. Deduplication — entries with the same content hash are not duplicated;
- *    newer entries update the confidence/timestamp of existing ones.
- * 3. Tag index — a Map<tag, Set<entryId>> for O(1) tag lookups without
- *    scanning all entries.
+ * Capabilities:
+ * 1. Hybrid Retrieval Engine — Combines Tag index, Keyword matching, and Vector Cosine Similarity (TF-IDF / 3-gram embedding).
+ * 2. Source Attribution & Conflict Resolution — user_stated(3) > agent_inferred(2) > tool_observed(1).
+ * 3. Content Hash Deduplication — Auto-updates timestamp/confidence for matching hashes.
  *
  * Storage: ~/.ovogo/projects/{slug}/memory/semantic.jsonl
  */
@@ -26,15 +23,13 @@ export interface SemanticMemoryEntry {
 }
 
 interface TagIndex {
-  [tag: string]: Set<string> // tag → set of entry IDs
+  [tag: string]: Set<string>
 }
 
 function nextId(): string {
   return `sem_${randomUUID()}`
 }
 
-// Source priority for conflict resolution (AgentOS pattern):
-// user_stated(3) > agent_inferred/consolidation(2) > tool_observed(1)
 const SOURCE_PRIORITY: Record<string, number> = {
   user_stated: 3,
   agent_inferred: 2,
@@ -50,9 +45,46 @@ function contentHash(content: string): string {
   return createHash('md5').update(content).digest('hex').slice(0, 12)
 }
 
+function extractTermVector(text: string): Map<string, number> {
+  const vec = new Map<string, number>()
+  const clean = text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ')
+  const words = clean.split(/\s+/).filter(Boolean)
+
+  for (const w of words) {
+    vec.set(w, (vec.get(w) ?? 0) + 1)
+    if (w.length >= 3) {
+      for (let i = 0; i <= w.length - 3; i++) {
+        const gram = w.slice(i, i + 3)
+        vec.set(gram, (vec.get(gram) ?? 0) + 0.5)
+      }
+    }
+  }
+
+  let normSq = 0
+  for (const val of vec.values()) normSq += val * val
+  const norm = Math.sqrt(normSq) || 1
+  for (const [k, v] of vec.entries()) vec.set(k, v / norm)
+
+  return vec
+}
+
+function cosineSimilarity(vecA: Map<string, number>, vecB: Map<string, number>): number {
+  let dotProduct = 0
+  const [smaller, larger] = vecA.size < vecB.size ? [vecA, vecB] : [vecB, vecA]
+
+  for (const [term, weightA] of smaller.entries()) {
+    const weightB = larger.get(term)
+    if (weightB !== undefined) {
+      dotProduct += weightA * weightB
+    }
+  }
+  return dotProduct
+}
+
 export class SemanticMemory {
   private filePath: string
   private entries: Map<string, SemanticMemoryEntry> = new Map()
+  private vectors: Map<string, Map<string, number>> = new Map()
   private tagIndex: TagIndex = {}
   private loaded = false
 
@@ -66,7 +98,6 @@ export class SemanticMemory {
     this.filePath = join(memDir, 'semantic.jsonl')
   }
 
-  /** Lazy-load from disk on first access */
   private ensureLoaded(): void {
     if (this.loaded) return
     this.loaded = true
@@ -79,6 +110,7 @@ export class SemanticMemory {
         try {
           const entry = JSON.parse(line) as SemanticMemoryEntry
           this.entries.set(entry.id, entry)
+          this.vectors.set(entry.id, extractTermVector(entry.content))
           for (const tag of entry.tags) {
             if (!this.tagIndex[tag]) this.tagIndex[tag] = new Set()
             this.tagIndex[tag].add(entry.id)
@@ -88,25 +120,20 @@ export class SemanticMemory {
         }
       }
     } catch {
-      // file unreadable — start fresh
+      // file unreadable
     }
   }
 
-  /** Append a new memory entry. Deduplicates by content hash. */
   write(entry: Omit<SemanticMemoryEntry, 'id'>): SemanticMemoryEntry {
     this.ensureLoaded()
 
     const hash = contentHash(entry.content)
 
-    // Check for duplicate content — resolve by source priority
     for (const [id, existing] of this.entries) {
       if (contentHash(existing.content) === hash) {
-        // Source priority conflict resolution (AgentOS pattern)
         if (sourceRank(entry.source) < sourceRank(existing.source)) {
-          // Lower priority can't override higher — keep existing
           return existing
         }
-        // Same or higher priority → update
         const updated: SemanticMemoryEntry = {
           ...existing,
           confidence: Math.max(existing.confidence, entry.confidence),
@@ -114,6 +141,7 @@ export class SemanticMemory {
           source: entry.source,
         }
         this.entries.set(id, updated)
+        this.vectors.set(id, extractTermVector(updated.content))
         this.persistAll()
         return updated
       }
@@ -121,8 +149,8 @@ export class SemanticMemory {
 
     const full: SemanticMemoryEntry = { ...entry, id: nextId() }
     this.entries.set(full.id, full)
+    this.vectors.set(full.id, extractTermVector(full.content))
 
-    // Update tag index
     for (const tag of full.tags) {
       if (!this.tagIndex[tag]) this.tagIndex[tag] = new Set()
       this.tagIndex[tag].add(full.id)
@@ -136,7 +164,6 @@ export class SemanticMemory {
     return full
   }
 
-  /** Persist all entries to disk (rewrite entire file for consistency) */
   private persistAll(): void {
     try {
       const lines = Array.from(this.entries.values())
@@ -148,22 +175,26 @@ export class SemanticMemory {
     }
   }
 
-  /** Read all entries from the in-memory index */
   readAll(): SemanticMemoryEntry[] {
     this.ensureLoaded()
     return Array.from(this.entries.values())
   }
 
-  /** Search by tags and/or keywords in content */
+  /**
+   * Hybrid Vector & Keyword Search Engine
+   * Filter by Tag & Keyword + Hybrid Cosine Vector Score.
+   */
   search(options: {
+    query?: string
     tags?: string[]
     keywords?: string[]
     limit?: number
   }): SemanticMemoryEntry[] {
     this.ensureLoaded()
-    let results: SemanticMemoryEntry[]
 
-    // Fast path: use tag index
+    let candidates: SemanticMemoryEntry[]
+
+    // 1. Tag filter
     if (options.tags && options.tags.length > 0) {
       const candidateIds = new Set<string>()
       for (const tag of options.tags) {
@@ -172,28 +203,44 @@ export class SemanticMemory {
           for (const id of ids) candidateIds.add(id)
         }
       }
-      results = Array.from(candidateIds)
+      candidates = Array.from(candidateIds)
         .map((id) => this.entries.get(id))
         .filter((e): e is SemanticMemoryEntry => e !== undefined)
     } else {
-      results = Array.from(this.entries.values())
+      candidates = Array.from(this.entries.values())
     }
 
-    // Keyword filter (still needs full scan)
+    // 2. Keyword strict filter (if keywords are specified, entry must contain at least one keyword)
     if (options.keywords && options.keywords.length > 0) {
       const lowerKeywords = options.keywords.map((k) => k.toLowerCase())
-      results = results.filter((e) =>
+      candidates = candidates.filter((e) =>
         lowerKeywords.some((kw) => e.content.toLowerCase().includes(kw)),
       )
     }
 
-    // Sort by confidence descending, then by timestamp descending
-    results.sort((a, b) => {
-      if (b.confidence !== a.confidence) return b.confidence - a.confidence
-      return b.timestamp.localeCompare(a.timestamp)
+    // 3. Score candidates using vector similarity & confidence
+    const queryVec = options.query ? extractTermVector(options.query) : null
+
+    const scored = candidates.map((entry) => {
+      let score = entry.confidence * 0.3
+
+      if (queryVec) {
+        const entryVec = this.vectors.get(entry.id)
+        if (entryVec) {
+          const sim = cosineSimilarity(queryVec, entryVec)
+          score += sim * 0.7
+        }
+      }
+
+      return { entry, score }
+    })
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      return b.entry.timestamp.localeCompare(a.entry.timestamp)
     })
 
     const limit = options.limit ?? 20
-    return results.slice(0, limit)
+    return scored.slice(0, limit).map((s) => s.entry)
   }
 }

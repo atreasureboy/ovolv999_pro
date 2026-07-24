@@ -66,7 +66,7 @@ Available skills can be found in the system prompt's skill index section. Each s
       // Permission check: skill.tools must be subset of agent's available tools
       if (skill.tools && skill.tools.length > 0 && context.availableToolNames) {
         const available = new Set(context.availableToolNames)
-        const missing = skill.tools.filter(t => !available.has(t))
+        const missing = skill.tools.filter((t) => !available.has(t))
         if (missing.length > 0) {
           return Promise.resolve({
             content: `Skill "${skillName}" requires tools not available: ${missing.join(', ')}`,

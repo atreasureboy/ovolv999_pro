@@ -32,16 +32,18 @@ export interface MockToolContextOverrides extends Partial<ToolContext> {
  * Fabricate a ToolContext suitable for tool unit-tests.
  * Every field has a safe no-op default; override only what your tool reads.
  */
-export function createMockToolContext(
-  overrides: MockToolContextOverrides = {},
-): ToolContext {
+export function createMockToolContext(overrides: MockToolContextOverrides = {}): ToolContext {
   const signal = overrides.signal ?? new AbortController().signal
   return {
     cwd: overrides.cwd ?? process.cwd(),
     permissionMode: overrides.permissionMode ?? 'auto',
     signal,
     updateProgress: overrides.updateProgress ?? (() => {}),
-    apiConfig: overrides.apiConfig ?? { apiKey: 'test-key', baseURL: undefined, model: 'test-model' },
+    apiConfig: overrides.apiConfig ?? {
+      apiKey: 'test-key',
+      baseURL: undefined,
+      model: 'test-model',
+    },
     sessionDir: overrides.sessionDir,
     eventLog: overrides.eventLog,
     semanticMemory: overrides.semanticMemory,

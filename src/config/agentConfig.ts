@@ -94,8 +94,8 @@ export const MODEL_CONTEXT_TOKENS: Record<string, number> = {
   'gpt-4o-mini': 128_000,
   'gpt-4.1': 1_000_000,
   'gpt-4.1-mini': 1_000_000,
-  'o1': 200_000,
-  'o3': 200_000,
+  o1: 200_000,
+  o3: 200_000,
   'o3-mini': 200_000,
   'claude-sonnet-4-x': 200_000,
   'claude-sonnet-4-5': 200_000,
@@ -140,7 +140,7 @@ function tryParse(path: string): AgentConfigFile {
   const result = agentConfigSchema.safeParse(parsed)
   if (!result.success) {
     const issues = result.error.issues
-      .map(i => `  · ${i.path.join('.') || '<root>'}: ${i.message}`)
+      .map((i) => `  · ${i.path.join('.') || '<root>'}: ${i.message}`)
       .join('\n')
     process.stderr.write(
       `[agentConfig] warning: ${path} has invalid config:\n${issues}\nignoring this file\n`,
@@ -150,9 +150,7 @@ function tryParse(path: string): AgentConfigFile {
   // Warn about unknown top-level keys (likely typos, e.g. "models" vs "model")
   // without rejecting the otherwise-valid fields.
   if (parsed && typeof parsed === 'object') {
-    const extras = Object.keys(parsed as Record<string, unknown>).filter(
-      k => !KNOWN_KEYS.has(k),
-    )
+    const extras = Object.keys(parsed as Record<string, unknown>).filter((k) => !KNOWN_KEYS.has(k))
     if (extras.length > 0) {
       process.stderr.write(
         `[agentConfig] warning: ${path} has unknown key(s): ${extras.join(', ')} (ignored). Known keys: ${[...KNOWN_KEYS].join(', ')}\n`,
@@ -181,8 +179,7 @@ function mergeConfigs(a: AgentConfigFile, b: AgentConfigFile): AgentConfigFile {
         : undefined,
     mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) },
     verifyCommands: b.verifyCommands ?? a.verifyCommands,
-    pricing:
-      a.pricing || b.pricing ? { ...a.pricing, ...b.pricing } : undefined,
+    pricing: a.pricing || b.pricing ? { ...a.pricing, ...b.pricing } : undefined,
   }
 }
 

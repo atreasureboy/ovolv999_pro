@@ -13,7 +13,12 @@
 
 import type { Tool, ToolDefinition, ToolResult, ToolContext } from '../core/types.js'
 import type { Logger } from '../core/logger.js'
-import { McpClient, type McpToolDescriptor, type McpContentBlock, type McpServerLaunchConfig } from './client.js'
+import {
+  McpClient,
+  type McpToolDescriptor,
+  type McpContentBlock,
+  type McpServerLaunchConfig,
+} from './client.js'
 
 /** Convert an MCP JSON Schema into the base's ToolDefinition.parameters. */
 function schemaToParameters(
@@ -30,7 +35,7 @@ function schemaToParameters(
 /** Flatten MCP content blocks (text + others) into a single tool-result string. */
 function blocksToText(blocks: McpContentBlock[]): string {
   return blocks
-    .map(b => {
+    .map((b) => {
       if (typeof b.text === 'string') return b.text
       // Non-text blocks (image/resource): represent compactly so the model knows.
       return `[${b.type} block]`
@@ -40,10 +45,7 @@ function blocksToText(blocks: McpContentBlock[]): string {
 }
 
 /** Wrap a single MCP tool descriptor as a native Tool. */
-export function wrapMcpTool(
-  client: McpClient,
-  descriptor: McpToolDescriptor,
-): Tool {
+export function wrapMcpTool(client: McpClient, descriptor: McpToolDescriptor): Tool {
   const callName = `mcp__${client.serverName}__${descriptor.name}`
   return {
     name: callName,
@@ -115,14 +117,18 @@ export async function loadMcpServers(
         error: (err as Error).message,
       })
       summary.push(`mcp:${name} — FAILED (${(err as Error).message})`)
-      try { await client.close() } catch { /* already failing */ }
+      try {
+        await client.close()
+      } catch {
+        /* already failing */
+      }
     }
   }
 
   return {
     tools,
     close: async () => {
-      await Promise.all(clients.map(c => c.close().catch(() => undefined)))
+      await Promise.all(clients.map((c) => c.close().catch(() => undefined)))
     },
     summary,
   }

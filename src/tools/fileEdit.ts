@@ -34,7 +34,8 @@ export class FileEditTool implements Tool {
           },
           old_string: {
             type: 'string',
-            description: 'Exact string to find (must be unique in the file unless replace_all=true)',
+            description:
+              'Exact string to find (must be unique in the file unless replace_all=true)',
           },
           new_string: {
             type: 'string',
@@ -63,7 +64,10 @@ export class FileEditTool implements Tool {
       return { content: 'Error: new_string must be a string', isError: true }
     }
     if (old_string === new_string) {
-      return { content: 'Error: old_string and new_string are identical — no change needed', isError: true }
+      return {
+        content: 'Error: old_string and new_string are identical — no change needed',
+        isError: true,
+      }
     }
 
     try {

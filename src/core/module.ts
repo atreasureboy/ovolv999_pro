@@ -13,7 +13,14 @@
  */
 
 import type OpenAI from 'openai'
-import type { Tool, ToolContext, ToolResult, OpenAIMessage, TurnResult, EngineConfig } from './types.js'
+import type {
+  Tool,
+  ToolContext,
+  ToolResult,
+  OpenAIMessage,
+  TurnResult,
+  EngineConfig,
+} from './types.js'
 import type { EventLog } from './eventLog.js'
 
 /** Context passed to module factories — provides shared dependencies */

@@ -73,10 +73,10 @@ Higher-priority sources override lower ones on conflict.`,
       const tags = Array.isArray(input.tags)
         ? (input.tags as unknown[]).filter((t): t is string => typeof t === 'string')
         : []
-      const confidence = typeof input.confidence === 'number'
-        ? Math.min(Math.max(input.confidence, 0), 1)
-        : 0.7
-      const source = str(input.source, 'agent_inferred') as 'user_stated' | 'agent_inferred' | 'tool_observed'
+      const confidence =
+        typeof input.confidence === 'number' ? Math.min(Math.max(input.confidence, 0), 1) : 0.7
+      const source = str(input.source, 'agent_inferred') as
+        'user_stated' | 'agent_inferred' | 'tool_observed'
 
       const entry = semantic.write({
         content: content.slice(0, 500),
@@ -188,9 +188,7 @@ function createMemoryRecallTool(episodic: EpisodicMemory): Tool {
       const limit = typeof input.limit === 'number' ? Math.min(input.limit, 50) : 15
       const toolName = str(input.tool_name)
 
-      const all = toolName
-        ? episodic.findByTool(toolName, limit)
-        : episodic.recent(limit)
+      const all = toolName ? episodic.findByTool(toolName, limit) : episodic.recent(limit)
 
       if (all.length === 0) {
         return Promise.resolve({
@@ -219,8 +217,39 @@ function extractKeywords(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[\s,.;:!?'"\-—–()]+/)
-    .filter(w => w.length > 2)
-    .filter(w => !['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'from', 'this', 'that', 'with', 'your', 'what', 'here', 'there', 'their', 'would'].includes(w))
+    .filter((w) => w.length > 2)
+    .filter(
+      (w) =>
+        ![
+          'the',
+          'and',
+          'for',
+          'are',
+          'but',
+          'not',
+          'you',
+          'all',
+          'can',
+          'had',
+          'her',
+          'was',
+          'one',
+          'our',
+          'out',
+          'has',
+          'have',
+          'from',
+          'this',
+          'that',
+          'with',
+          'your',
+          'what',
+          'here',
+          'there',
+          'their',
+          'would',
+        ].includes(w),
+    )
 }
 
 /** Score a memory entry against keywords — higher = more relevant */
@@ -258,8 +287,8 @@ export class MemoryModule implements AgentModule {
     if (allEntries.length > 0 && ctx.userMessage) {
       const keywords = extractKeywords(ctx.userMessage)
       const scored = allEntries
-        .map(e => ({ entry: e, score: scoreRelevance(e, keywords) }))
-        .filter(x => x.score > 0) // Only inject relevant entries
+        .map((e) => ({ entry: e, score: scoreRelevance(e, keywords) }))
+        .filter((x) => x.score > 0) // Only inject relevant entries
         .sort((a, b) => b.score - a.score)
         .slice(0, 10) // Top-K to save context budget
 
@@ -309,7 +338,7 @@ export class MemoryModule implements AgentModule {
       toolName,
       inputSummary: JSON.stringify(input).slice(0, 200),
       resultSummary: result.content.slice(0, 300),
-      outcome: result.isError ? 'failure' as const : 'success' as const,
+      outcome: result.isError ? ('failure' as const) : ('success' as const),
       timestamp: new Date().toISOString(),
     })
   }

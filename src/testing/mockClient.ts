@@ -132,6 +132,6 @@ function buildCompletion(res: ScriptedResponse): Record<string, unknown> {
   const content = res.kind === 'text' ? res.content : ''
   return {
     choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }],
-    usage: 'usage' in res ? res.usage ?? null : null,
+    usage: 'usage' in res ? (res.usage ?? null) : null,
   }
 }

@@ -32,9 +32,7 @@ import type { TaskContext } from '../config/settings.js'
  */
 function prependBullets(items: Array<string | string[]>): string[] {
   return items.flatMap((item) =>
-    Array.isArray(item)
-      ? item.map((sub) => `   - ${sub}`)
-      : [` - ${item}`],
+    Array.isArray(item) ? item.map((sub) => `   - ${sub}`) : [` - ${item}`],
   )
 }
 
@@ -78,18 +76,14 @@ function getMindsetSection(): string {
     '不臆造 — 不确定某能力是否可用时先查证（依赖、环境、文档），不要假设',
     '出错就修 — 工具报错先读输出、诊断原因、重试，不要跳过继续',
   ]
-  return [
-    '# 工作准则',
-    '',
-    '## 核心原则',
-    ...prependBullets(principles),
-  ].join('\n')
+  return ['# 工作准则', '', '## 核心原则', ...prependBullets(principles)].join('\n')
 }
 
 function getToolUsageSection(): string {
   const fileOps = [
     '读文件 → Read（不用 cat/head/tail）',
-    '编辑 → Edit（精确字符串替换，不用 sed）',
+    '单处编辑 → Edit（精确字符串替换，不用 sed）',
+    '多处编辑 → MultiEdit（单文件多块非连续原子替换）',
     '查找文件 → Glob（不用 find/ls）',
     '内容搜索 → Grep（不用 grep/rg）',
     '新建文件 → Write（不用 echo > / heredoc）',
@@ -97,19 +91,20 @@ function getToolUsageSection(): string {
   const concurrency = [
     '同一轮响应中，多个独立的只读/Bash 调用会被引擎 Promise.all 并发执行 —— 想并行就在**一个响应里**同时发出多个调用',
     '依赖的串行命令用 && 拼在同一个 Bash 调用里，不要拆多次',
-    '长时任务用后台运行并重定向到文件，后续用 Read / tail 查进度',
+    '长时后台任务可使用 Task 工具启动并管理，避免阻塞主循环',
   ]
   const bashRules = [
     '路径含空格加引号；尽量用绝对路径；避免 cd（用工具的 workdir 参数）',
-    '后台任务必须重定向 `> file 2>&1`，否则输出丢失',
+    '后台任务必须重定向 `> file 2>&1`，或使用 Task({ action: "start" }) 调度',
     '命令失败 → 读错误输出、诊断、修复后重试，不要直接放弃',
   ]
   const tools = [
     '**Bash** — 执行 shell 命令（编译、运行、git 等）',
-    '**Read / Write / Edit / Glob / Grep** — 文件操作（优先用专用工具而非 Bash）',
+    '**Read / Write / Edit / MultiEdit / Glob / Grep** — 文件操作（优先用专用工具而非 Bash）',
     '**TodoWrite** — 3 步以上任务分解与进度跟踪',
     '**WebFetch / WebSearch** — 获取网页内容、搜索资料、查文档',
     '**Agent** — 委派子 agent（预设名或自定义 AgentConfig）',
+    '**Task** — 管理后台异步进程（启动长时任务、查看日志、发送 stdin、终止）',
     '**load_skill** — 按需加载技能的完整 prompt（懒加载）',
     '**TmuxSession** — 管理本地交互进程（REPL、需要等待提示符的程序）',
   ]
@@ -150,16 +145,19 @@ function getMultiAgentSection(): string {
 
 ## 指定子 Agent 配置
 
-方式 1 — 预设名称: subagent_type: "explore" | "plan" | "code-reviewer" | "general-purpose"
+方式 1 — 预设名称: subagent_type: "explore" | "plan" | "code-reviewer" | "security-auditor" | "manager" | "data-analyst" | "general-purpose"
 方式 2 — 自定义配置: agent_config: { identity, modules, tools, maxIterations }
 
 ## 内置预设
 
 | 预设 | 权限 | 适用场景 |
 |------|------|----------|
-| explore | 只读 | 代码探索、结构分析、答疑 |
-| plan | 只读 | 输出可执行实现计划 |
-| code-reviewer | 只读 | 代码审查 |
+| explore | 只读 | 资源/环境/数据探查、结构分析、答疑 |
+| plan | 只读 | 分析现有状态，输出可执行步骤计划 |
+| code-reviewer | 只读 | 代码/配置/文件变更审查 |
+| security-auditor | 只读 | 安全审计、凭据泄漏排查、权限边界检查 |
+| manager | 协调 | 复杂任务拆分、委派子 Agent、汇总状态与报告 |
+| data-analyst | 只读 | 日志/指标/数据集提取与分析报告 |
 | general-purpose | 全工具 | 通用复杂子任务（带 memory + workspace） |
 
 ## 并行 vs 串行决策
@@ -200,7 +198,11 @@ function getAutonomySection(): string {
 
 // ─── assembly ───────────────────────────────────────────────────────────────
 
-export function getSystemPrompt(cwd: string, taskContext?: TaskContext, sessionDir?: string): string {
+export function getSystemPrompt(
+  cwd: string,
+  taskContext?: TaskContext,
+  sessionDir?: string,
+): string {
   const sections: Array<string | null> = [
     getIntroSection(cwd, sessionDir),
     taskContext ? formatTaskContextSection(taskContext, sessionDir) : null,
@@ -286,5 +288,3 @@ You are currently in PLAN MODE. Rules for this mode:
 
 `
 }
-
-

@@ -53,7 +53,10 @@ const DEFAULT_VERIFY_COMMANDS: string[] = []
  * agent.json) so non-TypeScript projects can run `pytest`/`cargo test`/etc.
  * Returns null if all pass, or a formatted failure summary.
  */
-function runVerification(cwd: string, commands: string[]): { passed: boolean; output: string } | null {
+function runVerification(
+  cwd: string,
+  commands: string[],
+): { passed: boolean; output: string } | null {
   const results: string[] = []
   let allPassed = true
 
@@ -79,7 +82,10 @@ function runVerification(cwd: string, commands: string[]): { passed: boolean; ou
 // ── Engine factory injection ─────────────────────────────────────────────────
 
 type ChildEngine = {
-  runTurn: (msg: string, history: never[]) => Promise<{ result: { output: string; reason: string } }>
+  runTurn: (
+    msg: string,
+    history: never[],
+  ) => Promise<{ result: { output: string; reason: string } }>
   abort: () => void
 }
 let _engineFactory: ((config: EngineConfig, renderer: unknown) => ChildEngine) | null = null
@@ -112,7 +118,7 @@ function appendAgentEvent(config: EngineConfig, event: Record<string, unknown>):
 }
 
 export function registerAgentFactory(
-  factory: ((config: EngineConfig, renderer: unknown) => ChildEngine),
+  factory: (config: EngineConfig, renderer: unknown) => ChildEngine,
   config: EngineConfig,
   renderer: unknown,
 ): void {
@@ -169,23 +175,28 @@ async function runAgentTaskInner(
   }
 
   const mainRenderer = _currentRenderer as {
-    agentStart:     (desc: string, type: string) => void
-    agentDone:      (desc: string, success: boolean) => void
-    agentSummary:   (agentType: string, desc: string, summary: string) => void
+    agentStart: (desc: string, type: string) => void
+    agentDone: (desc: string, success: boolean) => void
+    agentSummary: (agentType: string, desc: string, summary: string) => void
     agentHeartbeat: (agentType: string, desc: string, elapsedSec: number) => void
   }
   mainRenderer.agentStart(description, agentLabel)
   const agentStartTime = Date.now()
 
   // Structured communication event: INVOKE_SENT (with call depth)
-  context.eventLog?.append('invoke_sent', agentLabel, {
-    description,
-    modules: agentConfig.modules ? Object.keys(agentConfig.modules) : [],
-    planMode: agentConfig.identity.planMode ?? false,
-    maxIterations: agentConfig.maxIterations,
-    call_depth: myDepth,
-    verify_enabled: verify,
-  }, [agentLabel, 'invoke'])
+  context.eventLog?.append(
+    'invoke_sent',
+    agentLabel,
+    {
+      description,
+      modules: agentConfig.modules ? Object.keys(agentConfig.modules) : [],
+      planMode: agentConfig.identity.planMode ?? false,
+      maxIterations: agentConfig.maxIterations,
+      call_depth: myDepth,
+      verify_enabled: verify,
+    },
+    [agentLabel, 'invoke'],
+  )
 
   const paneLabel = `[${agentLabel}] ${description}`
   const paneSlot = tmuxLayout.acquireSlot(paneLabel)
@@ -275,22 +286,32 @@ async function runAgentTaskInner(
       if (verifyResult) {
         const icon = verifyResult.passed ? '✓' : '✗'
         verifySection = `\n\n---\n[验证闸门] ${icon}\n${verifyResult.output}`
-        context.eventLog?.append('invoke_completed', agentLabel, {
-          description,
-          verified: true,
-          verification_passed: verifyResult.passed,
-        }, [agentLabel, 'verify', verifyResult.passed ? 'passed' : 'failed'])
+        context.eventLog?.append(
+          'invoke_completed',
+          agentLabel,
+          {
+            description,
+            verified: true,
+            verification_passed: verifyResult.passed,
+          },
+          [agentLabel, 'verify', verifyResult.passed ? 'passed' : 'failed'],
+        )
       }
     }
 
-    context.eventLog?.append('invoke_completed', agentLabel, {
-      description,
-      success: result.reason !== 'error',
-      reason: result.reason,
-      duration_ms: durationMs,
-      call_depth: myDepth,
-      output_preview: result.output.slice(0, 500),
-    }, [agentLabel, 'invoke', result.reason !== 'error' ? 'success' : 'error'])
+    context.eventLog?.append(
+      'invoke_completed',
+      agentLabel,
+      {
+        description,
+        success: result.reason !== 'error',
+        reason: result.reason,
+        duration_ms: durationMs,
+        call_depth: myDepth,
+        output_preview: result.output.slice(0, 500),
+      },
+      [agentLabel, 'invoke', result.reason !== 'error' ? 'success' : 'error'],
+    )
 
     if (!result.output) {
       return {
@@ -363,10 +384,17 @@ export class AgentTool implements Tool {
         properties: {
           description: { type: 'string', description: '任务标签' },
           prompt: { type: 'string', description: '完整任务指令（必须自包含）' },
-          subagent_type: { type: 'string', enum: PRESET_NAMES, description: '预设名称（默认 general-purpose）' },
+          subagent_type: {
+            type: 'string',
+            enum: PRESET_NAMES,
+            description: '预设名称（默认 general-purpose）',
+          },
           agent_config: { type: 'object', description: '自定义配置（覆盖 subagent_type）' },
           max_iterations: { type: 'number', description: '最大执行轮数（覆盖预设默认值）' },
-          verify: { type: 'boolean', description: '验证闸门：完成后自动跑 tsc --noEmit 检查类型安全（默认 false）' },
+          verify: {
+            type: 'boolean',
+            description: '验证闸门：完成后自动跑 tsc --noEmit 检查类型安全（默认 false）',
+          },
         },
         required: ['description', 'prompt'],
       },
@@ -375,22 +403,28 @@ export class AgentTool implements Tool {
 
   async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const description = str(input.description, 'subtask')
-    const prompt      = str(input.prompt, '')
-    const verify      = input.verify === true
+    const prompt = str(input.prompt, '')
+    const verify = input.verify === true
 
     if (!prompt.trim()) {
       return { content: 'Error: prompt 不能为空', isError: true }
     }
 
     if (!_engineFactory || !_currentConfig || !_currentRenderer) {
-      return { content: 'Error: AgentTool 未初始化，请先调用 registerAgentFactory。', isError: true }
+      return {
+        content: 'Error: AgentTool 未初始化，请先调用 registerAgentFactory。',
+        isError: true,
+      }
     }
 
     const presetName = str(input.subagent_type, '') || undefined
     const rawConfig = input.agent_config
-    const customConfig = rawConfig ? validateAgentConfig(rawConfig) ?? undefined : undefined
+    const customConfig = rawConfig ? (validateAgentConfig(rawConfig) ?? undefined) : undefined
     if (rawConfig && !customConfig) {
-      return { content: 'Error: agent_config is malformed — need identity.systemPrompt at minimum', isError: true }
+      return {
+        content: 'Error: agent_config is malformed — need identity.systemPrompt at minimum',
+        isError: true,
+      }
     }
     const agentConfig = resolveAgentConfig({
       preset: customConfig ? undefined : presetName,

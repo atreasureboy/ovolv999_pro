@@ -53,7 +53,7 @@ export class ReflectionModule implements AgentModule {
 
   async onComplete(ctx: ModuleRunContext): Promise<void> {
     // Skip if the run was too short to yield useful insights
-    const toolCallCount = ctx.messages.filter(m => m.role === 'tool').length
+    const toolCallCount = ctx.messages.filter((m) => m.role === 'tool').length
     if (toolCallCount < 3) return
 
     // Skip if the run ended in error
@@ -62,18 +62,21 @@ export class ReflectionModule implements AgentModule {
     try {
       const conversationSummary = this.serializeForReflection(ctx.messages)
 
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [
-          { role: 'system', content: REFLECTION_SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Analyze this agent run (outcome: ${ctx.turnResult.reason}):\n\n${conversationSummary}`,
-          },
-        ],
-        temperature: 0,
-        max_tokens: REFLECTION_MAX_TOKENS,
-      }, { timeout: 30_000 })
+      const response = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: [
+            { role: 'system', content: REFLECTION_SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: `Analyze this agent run (outcome: ${ctx.turnResult.reason}):\n\n${conversationSummary}`,
+            },
+          ],
+          temperature: 0,
+          max_tokens: REFLECTION_MAX_TOKENS,
+        },
+        { timeout: 30_000 },
+      )
 
       const output = response.choices[0]?.message?.content ?? ''
       const parsed = parseReflection(output)
@@ -103,7 +106,9 @@ export class ReflectionModule implements AgentModule {
     }
   }
 
-  private serializeForReflection(messages: { role: string; content: string | null; tool_calls?: unknown[] }[]): string {
+  private serializeForReflection(
+    messages: { role: string; content: string | null; tool_calls?: unknown[] }[],
+  ): string {
     const parts: string[] = []
     for (const msg of messages.slice(-30)) {
       if (msg.role === 'user' && typeof msg.content === 'string') {
@@ -112,7 +117,8 @@ export class ReflectionModule implements AgentModule {
         if (msg.content) parts.push(`[ASSISTANT]: ${msg.content.slice(0, 200)}`)
         if (msg.tool_calls?.length) {
           const names = (msg.tool_calls as Array<{ function: { name: string } }>)
-            .map(tc => tc.function.name).join(', ')
+            .map((tc) => tc.function.name)
+            .join(', ')
           parts.push(`[TOOLS USED]: ${names}`)
         }
       } else if (msg.role === 'tool' && typeof msg.content === 'string') {
@@ -138,8 +144,8 @@ function parseReflection(output: string): Array<{
       }>
     }
     return (parsed.knowledge ?? [])
-      .filter(e => e.content && e.content.length > 10)
-      .map(e => ({
+      .filter((e) => e.content && e.content.length > 10)
+      .map((e) => ({
         content: e.content.slice(0, 500),
         tags: e.tags ?? [],
         confidence: typeof e.confidence === 'number' ? e.confidence : 0.5,
@@ -169,29 +175,34 @@ export async function consolidateSession(
     return { episodes: episodes.length, knowledgeExtracted: 0 }
   }
 
-  const sessionSummary = episodes.map((e, i) => {
-    const icon = e.outcome === 'success' ? '✓' : '✗'
-    return `${i + 1}. ${icon} ${e.toolName}: ${e.inputSummary.slice(0, 60)} → ${e.resultSummary.slice(0, 80)}`
-  }).join('\n')
+  const sessionSummary = episodes
+    .map((e, i) => {
+      const icon = e.outcome === 'success' ? '✓' : '✗'
+      return `${i + 1}. ${icon} ${e.toolName}: ${e.inputSummary.slice(0, 60)} → ${e.resultSummary.slice(0, 80)}`
+    })
+    .join('\n')
 
   try {
-    const response = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: REFLECTION_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Summarize this entire coding session and extract durable knowledge:\n\n${sessionSummary}`,
-        },
-      ],
-      temperature: 0,
-      max_tokens: REFLECTION_MAX_TOKENS,
-    }, { timeout: 30_000 })
+    const response = await client.chat.completions.create(
+      {
+        model,
+        messages: [
+          { role: 'system', content: REFLECTION_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Summarize this entire coding session and extract durable knowledge:\n\n${sessionSummary}`,
+          },
+        ],
+        temperature: 0,
+        max_tokens: REFLECTION_MAX_TOKENS,
+      },
+      { timeout: 30_000 },
+    )
 
-      const output = response.choices[0]?.message?.content ?? ''
-      const parsed = parseReflection(output)
+    const output = response.choices[0]?.message?.content ?? ''
+    const parsed = parseReflection(output)
 
-      for (const entry of parsed) {
+    for (const entry of parsed) {
       semantic.write({
         content: `[session] ${entry.content}`,
         tags: entry.tags,

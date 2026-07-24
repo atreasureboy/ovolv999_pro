@@ -32,7 +32,11 @@ export function projectSlug(cwd: string): string {
 export function getMemoryDir(cwd: string): string {
   const slug = projectSlug(cwd)
   const dir = join(homedir(), '.ovogo', 'projects', slug, 'memory')
-  try { mkdirSync(dir, { recursive: true }) } catch { /* best-effort */ }
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    /* best-effort */
+  }
   return dir
 }
 
@@ -44,7 +48,11 @@ function readSemanticEntries(memoryDir: string): SemanticEntry[] {
     const lines = readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean)
     return lines
       .map((l) => {
-        try { return JSON.parse(l) as SemanticEntry } catch { return null }
+        try {
+          return JSON.parse(l) as SemanticEntry
+        } catch {
+          return null
+        }
       })
       .filter((e): e is SemanticEntry => e !== null)
   } catch {

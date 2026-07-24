@@ -42,7 +42,7 @@ async function duckduckgoSearch(query: string, numResults: number): Promise<Sear
 
     if (!resp.ok) return []
 
-    const data = await resp.json() as {
+    const data = (await resp.json()) as {
       AbstractText?: string
       AbstractURL?: string
       AbstractSource?: string
@@ -99,11 +99,11 @@ async function googleSearch(
     clearTimeout(timer)
     if (!resp.ok) return []
 
-    const data = await resp.json() as {
+    const data = (await resp.json()) as {
       items?: Array<{ title: string; link: string; snippet: string }>
     }
 
-    return (data.items ?? []).map(item => ({
+    return (data.items ?? []).map((item) => ({
       title: item.title,
       url: item.link,
       snippet: item.snippet,
@@ -133,11 +133,11 @@ async function serpApiSearch(
     clearTimeout(timer)
     if (!resp.ok) return []
 
-    const data = await resp.json() as {
+    const data = (await resp.json()) as {
       organic_results?: Array<{ title: string; link: string; snippet: string }>
     }
 
-    return (data.organic_results ?? []).map(r => ({
+    return (data.organic_results ?? []).map((r) => ({
       title: r.title,
       url: r.link,
       snippet: r.snippet,

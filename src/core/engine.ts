@@ -37,11 +37,7 @@ import type {
 import { createTools, findTool, getToolDefinitions } from '../tools/index.js'
 import { getPlanModePrefix } from '../prompts/system.js'
 import type { Renderer } from '../ui/renderer.js'
-import {
-  maybeCompact,
-  calculateContextState,
-  MODEL_MAX_CONTEXT_TOKENS,
-} from './compact.js'
+import { maybeCompact, calculateContextState, MODEL_MAX_CONTEXT_TOKENS } from './compact.js'
 import type { AgentModule, ModuleBootResult, ModuleBootContext } from './module.js'
 import { globalModuleRegistry } from './moduleRegistry.js'
 import { applyAgentToConfig } from './agentPresets.js'
@@ -51,13 +47,7 @@ import { applyAgentToConfig } from './agentPresets.js'
 const MAX_TOOL_RESULT_LENGTH = 20_000
 
 /** Plan mode — only read-only tools are exposed */
-const PLAN_MODE_TOOLS = new Set([
-  'Read',
-  'Glob',
-  'Grep',
-  'WebFetch',
-  'WebSearch',
-])
+const PLAN_MODE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'])
 
 /**
  * Concurrency-safe tools: run in parallel within a single LLM response.
@@ -188,22 +178,23 @@ export class ExecutionEngine {
       new OpenAI({
         apiKey: config.apiKey,
         baseURL: config.baseURL,
-        maxRetries: 5,      // SDK auto-retries 429/5xx with exponential backoff
-        timeout: 120_000,   // 2 min — covers slow reasoning models (deepseek-reasoner)
+        maxRetries: 5, // SDK auto-retries 429/5xx with exponential backoff
+        timeout: 120_000, // 2 min — covers slow reasoning models (deepseek-reasoner)
       })
     this.tools = createTools(config.extraTools ?? [])
-    this.allTools = this.tools  // will be updated with module tools in runTurn
+    this.allTools = this.tools // will be updated with module tools in runTurn
     this.eventLog = config.eventLog
 
     // Resolve enabled modules
     const enabledNames = this.deriveEnabledModules()
-    this.modules = enabledNames.length > 0
-      ? globalModuleRegistry.resolve(enabledNames, {
-          client: this.client,
-          model: config.model,
-          config,
-        })
-      : []
+    this.modules =
+      enabledNames.length > 0
+        ? globalModuleRegistry.resolve(enabledNames, {
+            client: this.client,
+            model: config.model,
+            config,
+          })
+        : []
   }
 
   /**
@@ -243,9 +234,10 @@ export class ExecutionEngine {
 
   private buildSystemPrompt(planMode: boolean, moduleSections: string[] = []): string {
     const baseSystemPrompt = this.config.systemPrompt ?? ''
-    const sections = moduleSections.length > 0
-      ? baseSystemPrompt + '\n\n---\n\n' + moduleSections.join('\n\n---\n\n')
-      : baseSystemPrompt
+    const sections =
+      moduleSections.length > 0
+        ? baseSystemPrompt + '\n\n---\n\n' + moduleSections.join('\n\n---\n\n')
+        : baseSystemPrompt
     if (planMode) {
       return getPlanModePrefix() + sections
     }
@@ -274,8 +266,7 @@ export class ExecutionEngine {
   // ── Context budget ──────────────────────────────────────────────────────
 
   private async evaluateContextBudget(messages: OpenAIMessage[]): Promise<void> {
-    const maxCtxTokens =
-      this.config.maxContextTokens ?? MODEL_MAX_CONTEXT_TOKENS
+    const maxCtxTokens = this.config.maxContextTokens ?? MODEL_MAX_CONTEXT_TOKENS
     // Single computation path — shares the threshold constants with compact.ts
     const state = calculateContextState(messages, maxCtxTokens, this.systemPromptTokens)
 
@@ -302,10 +293,7 @@ export class ExecutionEngine {
       if (compactResult.compacted) {
         messages.length = 0
         messages.push(...compactResult.messages)
-        this.renderer.compactDone(
-          compactResult.originalTokens,
-          compactResult.summaryTokens,
-        )
+        this.renderer.compactDone(compactResult.originalTokens, compactResult.summaryTokens)
         this.eventLog?.append('context_compact', 'engine', {
           tokens_after: compactResult.summaryTokens,
           reduction: compactResult.originalTokens - compactResult.summaryTokens,
@@ -375,7 +363,8 @@ export class ExecutionEngine {
     let finishReason: string | null = null
     const toolCallsMap = new Map<number, StreamingToolCall>()
     let firstToken = true
-    let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
+    let usage:
+      { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
 
     try {
       for await (const chunk of stream) {
@@ -436,9 +425,7 @@ export class ExecutionEngine {
       this.renderer.endAssistantText()
     }
 
-    const rawToolCalls = Array.from(toolCallsMap.values()).sort(
-      (a, b) => a.index - b.index,
-    )
+    const rawToolCalls = Array.from(toolCallsMap.values()).sort((a, b) => a.index - b.index)
 
     return { assistantText, finishReason, rawToolCalls, usage }
   }
@@ -480,10 +467,15 @@ export class ExecutionEngine {
     // is gated exactly once. Denied calls return an error result the model sees.
     if (this.config.permissionChecker) {
       const decision = await this.config.permissionChecker.check({ tool: toolName, input })
-      this.eventLog?.append('permission', toolName, {
-        allowed: decision.allowed,
-        reason: decision.reason,
-      }, [toolName, decision.allowed ? 'allowed' : 'denied'])
+      this.eventLog?.append(
+        'permission',
+        toolName,
+        {
+          allowed: decision.allowed,
+          reason: decision.reason,
+        },
+        [toolName, decision.allowed ? 'allowed' : 'denied'],
+      )
       if (!decision.allowed) {
         return {
           content: `Permission denied: ${decision.reason}. Tool "${toolName}" was not executed.`,
@@ -529,10 +521,15 @@ export class ExecutionEngine {
           `Error: malformed arguments for ${tc.name} — ${call.parseError}. ` +
           `Re-emit the call with valid JSON matching the tool's schema. Raw: ${tc.arguments.slice(0, 200)}`
         this.renderer.toolResult(tc.name, errContent, true)
-        this.eventLog?.append('tool_result', tc.name, {
-          parse_error: call.parseError,
-          isError: true,
-        }, [tc.name, 'parse_error'])
+        this.eventLog?.append(
+          'tool_result',
+          tc.name,
+          {
+            parse_error: call.parseError,
+            isError: true,
+          },
+          [tc.name, 'parse_error'],
+        )
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -567,11 +564,7 @@ export class ExecutionEngine {
         for (let i = 0; i < batch.calls.length; i++) {
           const { tc } = batch.calls[i]
           const result = results[i]
-          this.config.hookRunner?.runPostToolCall(
-            tc.name,
-            result.content,
-            result.isError,
-          )
+          this.config.hookRunner?.runPostToolCall(tc.name, result.content, result.isError)
           this.renderer.toolResult(tc.name, result.content, result.isError)
           this.eventLog?.append(
             'tool_result',
@@ -606,11 +599,7 @@ export class ExecutionEngine {
             turnNumber,
           )
 
-          this.config.hookRunner?.runPostToolCall(
-            tc.name,
-            result.content,
-            result.isError,
-          )
+          this.config.hookRunner?.runPostToolCall(tc.name, result.content, result.isError)
           this.renderer.toolResult(tc.name, result.content, result.isError)
           this.eventLog?.append(
             'tool_result',
@@ -688,25 +677,25 @@ export class ExecutionEngine {
       userMessage,
     }
     this.moduleBootResults = await Promise.all(
-      this.modules.map(m => Promise.resolve(m.boot(bootCtx))),
+      this.modules.map((m) => Promise.resolve(m.boot(bootCtx))),
     )
-    const moduleSections = this.moduleBootResults.flatMap(r => r.systemPromptSections ?? [])
+    const moduleSections = this.moduleBootResults.flatMap((r) => r.systemPromptSections ?? [])
     const toolContextPatch = this.moduleBootResults.reduce(
       (acc, r) => ({ ...acc, ...r.toolContextPatch }),
       {} as Partial<ToolContext>,
     )
     // Collect tools provided by modules
-    const moduleTools = this.moduleBootResults.flatMap(r => r.tools ?? [])
+    const moduleTools = this.moduleBootResults.flatMap((r) => r.tools ?? [])
     this.allTools = [...this.tools, ...moduleTools]
     // Build concurrency-safe set from each tool's self-declaration (P2-7)
     this.concurrencySafeNames = new Set(
-      this.allTools.filter(t => t.concurrencySafe).map(t => t.name),
+      this.allTools.filter((t) => t.concurrencySafe).map((t) => t.name),
     )
 
     // Record boot trajectory (AgentOS pattern)
     this.eventLog?.append('boot_context', 'engine', {
       trajectory: 'boot_context',
-      modules: this.modules.map(m => m.name),
+      modules: this.modules.map((m) => m.name),
       module_sections: moduleSections.length,
       module_tools: moduleTools.length,
       user_message_length: userMessage.length,
@@ -728,10 +717,10 @@ export class ExecutionEngine {
     let iterations = 0
     let finalOutput = ''
     let turnNumber = 0
-    const toolContext = this.buildToolContext(
-      turnAbortController.signal,
-      { ...toolContextPatch, availableToolNames: toolDefs.map(t => t.function.name) },
-    )
+    const toolContext = this.buildToolContext(turnAbortController.signal, {
+      ...toolContextPatch,
+      availableToolNames: toolDefs.map((t) => t.function.name),
+    })
 
     let result: TurnResult
     let lastToolName: string | undefined
@@ -777,13 +766,12 @@ export class ExecutionEngine {
         }
 
         // ── Streaming LLM call ───────────────────────────────────
-        const { assistantText, finishReason, rawToolCalls, usage } =
-          await this.callLLM(
-            systemPrompt,
-            messages,
-            toolDefs,
-            turnAbortController.signal,
-          )
+        const { assistantText, finishReason, rawToolCalls, usage } = await this.callLLM(
+          systemPrompt,
+          messages,
+          toolDefs,
+          turnAbortController.signal,
+        )
 
         // Track token usage + cost for observability (best-effort).
         if (usage) this.recordUsage(usage)
@@ -850,9 +838,7 @@ export class ExecutionEngine {
 
       // If loop completed without break (max iterations)
       if (!result!) {
-        this.renderer.warn(
-          `Max iterations (${this.config.maxIterations}) reached`,
-        )
+        this.renderer.warn(`Max iterations (${this.config.maxIterations}) reached`)
         result = { stopped: true, reason: 'max_iterations', output: finalOutput }
       }
     } catch (err) {
@@ -925,8 +911,9 @@ export class ExecutionEngine {
     const pricing = this.config.pricing
     const callCost =
       pricing && (pricing.inputPer1M || pricing.outputPer1M)
-        ? ((usage.prompt_tokens * (pricing.inputPer1M ?? 0)) +
-           (usage.completion_tokens * (pricing.outputPer1M ?? 0))) / 1_000_000
+        ? (usage.prompt_tokens * (pricing.inputPer1M ?? 0) +
+            usage.completion_tokens * (pricing.outputPer1M ?? 0)) /
+          1_000_000
         : 0
     this.tokenUsage = {
       promptTokens: prev.promptTokens + usage.prompt_tokens,

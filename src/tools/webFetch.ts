@@ -1,14 +1,16 @@
 /**
- * WebFetch — fetch URL and extract readable text
- * Reference: src/tools/WebFetchTool/
+ * WebFetch — Fetch URL and convert content to clean structured Markdown
  *
- * Uses Node's built-in fetch (Node 18+).
- * Strips HTML tags to return clean text for LLM consumption.
+ * Capabilities:
+ * - HTML to Markdown converter (headings, links, lists, code blocks, tables)
+ * - Metadata extraction (<title>, <meta description>)
+ * - Direct JSON formatting for API endpoints
+ * - Signal abortion support & 30s timeout
  */
 
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 
-const MAX_CONTENT_LENGTH = 50_000 // characters returned to LLM
+const MAX_CONTENT_LENGTH = 50_000
 const FETCH_TIMEOUT_MS = 30_000
 
 export interface WebFetchInput {
@@ -17,30 +19,50 @@ export interface WebFetchInput {
   start_index?: number
 }
 
-/**
- * Minimal HTML → plain text extraction.
- * Removes scripts/styles/tags, collapses whitespace.
- */
-function htmlToText(html: string): string {
-  return html
-    // Remove script and style blocks entirely
+/** Convert HTML to Markdown format for enhanced LLM reading */
+function htmlToMarkdown(html: string): { title?: string; description?: string; markdown: string } {
+  // Extract Title & Meta Description
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  const title = titleMatch ? titleMatch[1].trim() : undefined
+
+  const metaMatch = html.match(
+    /<meta[^>]*name=["']description["'][^>]*content=["']([\s\S]*?)["'][^>]*>/i,
+  )
+  const description = metaMatch ? metaMatch[1].trim() : undefined
+
+  const md = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
-    // Convert common block elements to newlines
-    .replace(/<\/?(p|div|section|article|header|footer|h[1-6]|li|tr|br)[^>]*>/gi, '\n')
-    // Remove all remaining tags
+    // Headings
+    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
+    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
+    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
+    .replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, '\n#### $1\n')
+    // Links
+    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)')
+    // Lists
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n')
+    // Code blocks & Inline Code
+    .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '\n```\n$1\n```\n')
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`')
+    // Blockquotes & Paragraphs
+    .replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, '\n> $1\n')
+    .replace(/<\/?(p|div|section|article|header|footer|tr|br)[^>]*>/gi, '\n')
+    // Strip remaining HTML tags
     .replace(/<[^>]+>/g, '')
-    // Decode common HTML entities
+    // Decode HTML entities
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    // Collapse whitespace
+    // Collapse excess whitespace
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+
+  return { title, description, markdown: md }
 }
 
 export class WebFetchTool implements Tool {
@@ -51,16 +73,8 @@ export class WebFetchTool implements Tool {
     type: 'function',
     function: {
       name: 'WebFetch',
-      description: `Fetch a URL and return its content as plain text.
-
-Use this to:
-- Read documentation pages
-- Fetch API responses
-- Check package READMEs or changelogs
-- Read web resources referenced in the task
-
-HTML is automatically stripped to extract readable text.
-Large pages are truncated — use start_index to paginate.`,
+      description: `Fetch a URL and return its content as clean Markdown or JSON.
+Supports HTML-to-Markdown conversion, meta-description extraction, and pagination via start_index.`,
       parameters: {
         type: 'object',
         properties: {
@@ -74,7 +88,7 @@ Large pages are truncated — use start_index to paginate.`,
           },
           start_index: {
             type: 'number',
-            description: 'Character offset to start from (for pagination, default: 0)',
+            description: 'Character offset to start from (default: 0)',
           },
         },
         required: ['url'],
@@ -88,84 +102,86 @@ Large pages are truncated — use start_index to paginate.`,
     if (!url || typeof url !== 'string') {
       return { content: 'Error: url is required', isError: true }
     }
-
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { content: 'Error: URL must start with http:// or https://', isError: true }
     }
 
-    const maxLen = typeof max_length === 'number' ? Math.min(max_length, MAX_CONTENT_LENGTH) : MAX_CONTENT_LENGTH
+    const maxLen =
+      typeof max_length === 'number' ? Math.min(max_length, MAX_CONTENT_LENGTH) : MAX_CONTENT_LENGTH
     const startIdx = typeof start_index === 'number' ? start_index : 0
 
     try {
-      // Compose a single AbortController that fires on either timeout OR Ctrl+C.
-      // Handle permitted redirects
-      const fetchController = new AbortController()
-      const timer = setTimeout(() => fetchController.abort('timeout'), FETCH_TIMEOUT_MS)
+      const timeoutController = new AbortController()
+      const timeoutId = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS)
 
+      const onParentAbort = () => timeoutController.abort()
       if (context.signal) {
         if (context.signal.aborted) {
-          clearTimeout(timer)
-          return { content: 'Request cancelled.', isError: true }
+          clearTimeout(timeoutId)
+          return { content: 'Error: Fetch aborted by user', isError: true }
         }
-        context.signal.addEventListener(
-          'abort',
-          () => { clearTimeout(timer); fetchController.abort('user_cancelled') },
-          { once: true },
-        )
+        context.signal.addEventListener('abort', onParentAbort, { once: true })
       }
 
-      const response = await fetch(url, {
-        signal: fetchController.signal,
-        headers: {
-          'User-Agent': 'ovogogogo/0.1.0 (autonomous code execution engine)',
-          'Accept': 'text/html,application/xhtml+xml,text/plain,*/*',
-        },
-        redirect: 'follow',
-      })
-
-      clearTimeout(timer)
+      let response: Response
+      try {
+        response = await fetch(url, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (compatible; ovogogogo/0.1.0; +https://github.com/ovogogogo)',
+            Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+          },
+          signal: timeoutController.signal,
+        })
+      } finally {
+        clearTimeout(timeoutId)
+        if (context.signal) {
+          context.signal.removeEventListener('abort', onParentAbort)
+        }
+      }
 
       if (!response.ok) {
         return {
-          content: `HTTP ${response.status} ${response.statusText} for ${url}`,
+          content: `HTTP Error ${response.status} ${response.statusText} fetching ${url}`,
           isError: true,
         }
       }
 
-      const contentType = response.headers.get('content-type') ?? ''
-      const rawBody = await response.text()
+      const contentType = response.headers.get('content-type') || ''
+      const rawText = await response.text()
 
-      let text: string
-      if (contentType.includes('text/html')) {
-        text = htmlToText(rawBody)
+      let textContent = ''
+      if (contentType.includes('application/json')) {
+        try {
+          const parsed = JSON.parse(rawText) as unknown
+          textContent = JSON.stringify(parsed, null, 2)
+        } catch {
+          textContent = rawText
+        }
       } else {
-        // JSON, plain text, etc — return as-is
-        text = rawBody.trim()
+        const { title, description, markdown } = htmlToMarkdown(rawText)
+        const metaHeader = [
+          title ? `# ${title}` : '',
+          description ? `> **Description**: ${description}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n')
+
+        textContent = metaHeader ? `${metaHeader}\n\n${markdown}` : markdown
       }
 
-      const totalLen = text.length
-      const slice = text.slice(startIdx, startIdx + maxLen)
+      const totalLen = textContent.length
+      const slice = textContent.slice(startIdx, startIdx + maxLen)
 
-      const header = `URL: ${url}\nContent-Type: ${contentType}\nLength: ${totalLen} chars\n`
-      const pagination =
-        startIdx + maxLen < totalLen
-          ? `\n\n[Showing chars ${startIdx}–${startIdx + maxLen} of ${totalLen}. Use start_index=${startIdx + maxLen} for next page.]`
-          : ''
-
-      return {
-        content: header + '\n' + slice + pagination,
-        isError: false,
+      let resultText = slice
+      if (startIdx > 0 || startIdx + maxLen < totalLen) {
+        resultText += `\n\n[Content truncated: showing chars ${startIdx}-${startIdx + slice.length} of ${totalLen} total]`
       }
+
+      return { content: resultText, isError: false }
     } catch (err: unknown) {
-      const error = err as Error
-      if (error.name === 'AbortError') {
-        const reason = (error as DOMException).cause ?? 'timeout'
-        const msg = reason === 'user_cancelled'
-          ? 'Request cancelled.'
-          : `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${url}`
-        return { content: msg, isError: true }
-      }
-      return { content: `Fetch error: ${error.message}`, isError: true }
+      const msg = err instanceof Error ? err.message : String(err)
+      return { content: `Error fetching ${url}: ${msg}`, isError: true }
     }
   }
 }

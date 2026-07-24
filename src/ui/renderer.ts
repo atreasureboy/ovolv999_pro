@@ -72,13 +72,7 @@ const LOGO_LINES = [
 ]
 
 // Gradient colors for logo (magenta → cyan → green)
-const LOGO_GRADIENT = [
-  FG.brightMagenta,
-  FG.magenta,
-  FG.brightBlue,
-  FG.brightCyan,
-  FG.brightGreen,
-]
+const LOGO_GRADIENT = [FG.brightMagenta, FG.magenta, FG.brightBlue, FG.brightCyan, FG.brightGreen]
 
 // ─────────────────────────────────────────────────────────────
 // Spinner frames (Braille Unicode)
@@ -87,12 +81,29 @@ const LOGO_GRADIENT = [
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 export const SPINNER_VERBS = [
-  'Analyzing',   'Architecting',  'Computing',   'Crafting',
-  'Decoding',    'Deliberating',  'Engineering', 'Executing',
-  'Exploring',   'Generating',    'Hacking',     'Inferring',
-  'Mapping',     'Orchestrating', 'Pondering',   'Probing',
-  'Reasoning',   'Ruminating',    'Scanning',    'Synthesizing',
-  'Thinking',    'Vibing',        'Wrangling',
+  'Analyzing',
+  'Architecting',
+  'Computing',
+  'Crafting',
+  'Decoding',
+  'Deliberating',
+  'Engineering',
+  'Executing',
+  'Exploring',
+  'Generating',
+  'Hacking',
+  'Inferring',
+  'Mapping',
+  'Orchestrating',
+  'Pondering',
+  'Probing',
+  'Reasoning',
+  'Ruminating',
+  'Scanning',
+  'Synthesizing',
+  'Thinking',
+  'Vibing',
+  'Wrangling',
 ]
 
 // ─────────────────────────────────────────────────────────────
@@ -100,14 +111,14 @@ export const SPINNER_VERBS = [
 // ─────────────────────────────────────────────────────────────
 
 const STRIPE = {
-  user:     `${FG.brightBlue}│${RESET}`,
-  assistant:`${FG.brightCyan}│${RESET}`,
-  tool:     `${FG.brightYellow}┃${RESET}`,
-  result:   `${FG.brightGreen}│${RESET}`,
-  error:    `${FG.brightRed}│${RESET}`,
-  agent:    `${FG.brightMagenta}│${RESET}`,
-  compact:  `${FG.yellow}│${RESET}`,
-  info:     `${FG.brightBlack}│${RESET}`,
+  user: `${FG.brightBlue}│${RESET}`,
+  assistant: `${FG.brightCyan}│${RESET}`,
+  tool: `${FG.brightYellow}┃${RESET}`,
+  result: `${FG.brightGreen}│${RESET}`,
+  error: `${FG.brightRed}│${RESET}`,
+  agent: `${FG.brightMagenta}│${RESET}`,
+  compact: `${FG.yellow}│${RESET}`,
+  info: `${FG.brightBlack}│${RESET}`,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -130,11 +141,13 @@ export class Renderer {
 
   constructor(options?: { stream?: NodeJS.WritableStream }) {
     const stream = options?.stream ?? process.stdout
-    this.write = (s: string) => { stream.write(s) }
+    this.write = (s: string) => {
+      stream.write(s)
+    }
     this.isTTY = (stream as NodeJS.WriteStream).isTTY === true
     this.termWidth = this.isTTY ? ((stream as NodeJS.WriteStream).columns ?? 80) : 80
     if (this.isTTY) {
-      (stream as NodeJS.WriteStream).on?.('resize', () => {
+      ;(stream as NodeJS.WriteStream).on?.('resize', () => {
         this.termWidth = (stream as NodeJS.WriteStream).columns ?? 80
       })
     }
@@ -142,7 +155,9 @@ export class Renderer {
 
   static forFile(filePath: string): Renderer {
     const fileStream = createWriteStream(filePath, { flags: 'a' })
-    fileStream.on('error', () => { /* best-effort — never crash on file write failure */ })
+    fileStream.on('error', () => {
+      /* best-effort — never crash on file write failure */
+    })
     return new Renderer({ stream: fileStream as unknown as NodeJS.WritableStream })
   }
 
@@ -193,7 +208,7 @@ export class Renderer {
     // Tagline
     this.write(
       `  ${DIM}Unified Agent Harness — ` +
-      `${FG.brightMagenta}module-driven autonomous agent${RESET}${DIM}${RESET}\n`,
+        `${FG.brightMagenta}module-driven autonomous agent${RESET}${DIM}${RESET}\n`,
     )
     this.write('\n')
   }
@@ -288,34 +303,34 @@ export class Renderer {
 
   private toolColor(name: string): string {
     const colors: Record<string, string> = {
-      Bash:              FG.brightYellow,
-      Read:              FG.brightCyan,
-      Write:             FG.brightGreen,
-      Edit:              FG.brightBlue,
-      Glob:              FG.brightMagenta,
-      Grep:              FG.brightMagenta,
-      WebFetch:          FG.cyan,
-      WebSearch:         FG.cyan,
-      TodoWrite:         FG.brightGreen,
-      Agent:             FG.brightMagenta,
-      TmuxSession:       FG.brightRed,
+      Bash: FG.brightYellow,
+      Read: FG.brightCyan,
+      Write: FG.brightGreen,
+      Edit: FG.brightBlue,
+      Glob: FG.brightMagenta,
+      Grep: FG.brightMagenta,
+      WebFetch: FG.cyan,
+      WebSearch: FG.cyan,
+      TodoWrite: FG.brightGreen,
+      Agent: FG.brightMagenta,
+      TmuxSession: FG.brightRed,
     }
     return colors[name] ?? FG.white
   }
 
   private toolIcon(name: string): string {
     const icons: Record<string, string> = {
-      Bash:              `${FG.brightYellow}⌘${RESET}`,
-      Read:              `${FG.brightCyan}◈${RESET}`,
-      Write:             `${FG.brightGreen}◈${RESET}`,
-      Edit:              `${FG.brightBlue}◈${RESET}`,
-      Glob:              `${FG.brightMagenta}◇${RESET}`,
-      Grep:              `${FG.brightMagenta}◇${RESET}`,
-      WebFetch:          `${FG.cyan}◎${RESET}`,
-      WebSearch:         `${FG.cyan}◎${RESET}`,
-      TodoWrite:         `${FG.brightGreen}☐${RESET}`,
-      Agent:             `${FG.brightMagenta}⎇${RESET}`,
-      TmuxSession:       `${FG.brightRed}⌁${RESET}`,
+      Bash: `${FG.brightYellow}⌘${RESET}`,
+      Read: `${FG.brightCyan}◈${RESET}`,
+      Write: `${FG.brightGreen}◈${RESET}`,
+      Edit: `${FG.brightBlue}◈${RESET}`,
+      Glob: `${FG.brightMagenta}◇${RESET}`,
+      Grep: `${FG.brightMagenta}◇${RESET}`,
+      WebFetch: `${FG.cyan}◎${RESET}`,
+      WebSearch: `${FG.cyan}◎${RESET}`,
+      TodoWrite: `${FG.brightGreen}☐${RESET}`,
+      Agent: `${FG.brightMagenta}⎇${RESET}`,
+      TmuxSession: `${FG.brightRed}⌁${RESET}`,
     }
     return icons[name] ?? `${FG.white}·${RESET}`
   }
@@ -434,10 +449,13 @@ export class Renderer {
   // ── Sub-agent display ───────────────────────────────────────
 
   agentStart(description: string, agentType = 'general-purpose'): void {
-    const typeLabel = agentType !== 'general-purpose'
-      ? `  ${DIM}[${FG.brightMagenta}${agentType}${RESET}${DIM}]${RESET}`
-      : ''
-    this.write(`\n  ${STRIPE.agent}  ${BOLD}${FG.brightMagenta}⎇${RESET}${BOLD}${FG.brightMagenta} Agent${RESET}${typeLabel}  ${DIM}${description}${RESET}\n`)
+    const typeLabel =
+      agentType !== 'general-purpose'
+        ? `  ${DIM}[${FG.brightMagenta}${agentType}${RESET}${DIM}]${RESET}`
+        : ''
+    this.write(
+      `\n  ${STRIPE.agent}  ${BOLD}${FG.brightMagenta}⎇${RESET}${BOLD}${FG.brightMagenta} Agent${RESET}${typeLabel}  ${DIM}${description}${RESET}\n`,
+    )
   }
 
   agentDone(description: string, success: boolean): void {
@@ -449,7 +467,7 @@ export class Renderer {
     const header = `  ${STRIPE.agent}  ${BOLD}${FG.brightMagenta}[${agentType}]${RESET} ${DIM}${description}${RESET}\n`
     const body = summary
       .split('\n')
-      .map(line => `  ${STRIPE.agent}    ${DIM}${line}${RESET}`)
+      .map((line) => `  ${STRIPE.agent}    ${DIM}${line}${RESET}`)
       .join('\n')
     this.write(`${header}${body}\n`)
   }
@@ -459,7 +477,7 @@ export class Renderer {
     const secs = elapsedSec % 60
     const elapsed = mins > 0 ? `${mins}m${secs}s` : `${secs}s`
     this.write(
-      `  ${STRIPE.agent}  ${FG.yellow}⏳${RESET} ${DIM}[${agentType}] ${description} — 运行中 ${elapsed}…${RESET}\n`
+      `  ${STRIPE.agent}  ${FG.yellow}⏳${RESET} ${DIM}[${agentType}] ${description} — 运行中 ${elapsed}…${RESET}\n`,
     )
   }
 
@@ -469,7 +487,7 @@ export class Renderer {
     const bar = this.thinBar()
     this.write(`\n  ${bar}\n`)
     this.write(
-      `  ${FG.brightBlue}◇${RESET}  ${BOLD}${FG.brightCyan}✦ PLAN MODE${RESET}  ${DIM}(read-only analysis)${RESET}\n`
+      `  ${FG.brightBlue}◇${RESET}  ${BOLD}${FG.brightCyan}✦ PLAN MODE${RESET}  ${DIM}(read-only analysis)${RESET}\n`,
     )
     this.write(`  ${bar}\n`)
   }
@@ -524,11 +542,11 @@ export class Renderer {
     const bar = this.fullWidth('─')
     this.write(
       `\n\x07` +
-      `  ${FG.brightYellow}╭${bar}╮${RESET}\n` +
-      `  ${FG.brightYellow}│${RESET}  ${FG.brightYellow}${BOLD}⚡ 任务已暂停${RESET}  ${DIM}输入建议后按 Enter 注入并继续${RESET}  ${FG.brightYellow}│${RESET}\n` +
-      `  ${FG.brightYellow}│${RESET}  ${DIM}直接按 Enter = 静默恢复  |  Ctrl+D = 终止${RESET}  ${FG.brightYellow}│${RESET}\n` +
-      `  ${FG.brightYellow}╰${bar}╯${RESET}\n` +
-      `${FG.brightYellow}◇${RESET} `,
+        `  ${FG.brightYellow}╭${bar}╮${RESET}\n` +
+        `  ${FG.brightYellow}│${RESET}  ${FG.brightYellow}${BOLD}⚡ 任务已暂停${RESET}  ${DIM}输入建议后按 Enter 注入并继续${RESET}  ${FG.brightYellow}│${RESET}\n` +
+        `  ${FG.brightYellow}│${RESET}  ${DIM}直接按 Enter = 静默恢复  |  Ctrl+D = 终止${RESET}  ${FG.brightYellow}│${RESET}\n` +
+        `  ${FG.brightYellow}╰${bar}╯${RESET}\n` +
+        `${FG.brightYellow}◇${RESET} `,
     )
   }
 

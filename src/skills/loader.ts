@@ -57,7 +57,10 @@ function parseFrontmatter(content: string): {
     if (colonIdx > 0) {
       const key = line.slice(0, colonIdx).trim()
       // Strip surrounding quotes from value
-      const value = line.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '')
+      const value = line
+        .slice(colonIdx + 1)
+        .trim()
+        .replace(/^["']|["']$/g, '')
       if (key) fm[key] = value
     }
   }
@@ -89,7 +92,10 @@ function parseSkillFile(
 
     // Tools: comma-separated list in frontmatter (e.g. tools: Bash, Read, Grep)
     const tools = frontmatter.tools
-      ? frontmatter.tools.split(',').map((t) => t.trim()).filter(Boolean)
+      ? frontmatter.tools
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean)
       : undefined
 
     // Version (optional)
