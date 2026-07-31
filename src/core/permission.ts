@@ -1,44 +1,62 @@
 /**
- * Permission Gate — approval/deny rules for tool execution.
+ * Permission System — 7-mode cycling + rule engine
  *
- * Why this exists: `permissionMode` was a declared-but-unimplemented enum. Tools
- * that touch the real system (Bash, Write, Edit) need a security boundary so a
- * base consumer can decide what runs unattended vs. what must be approved.
+ * Modes:
+ *   default          — ask for dangerous, allow safe
+ *   acceptEdits      — auto-approve file edits, still gate Bash
+ *   plan             — read-only (no writes/edits/bash)
+ *   auto             — auto-approve everything except dangerous
+ *   bypassPermissions — approve everything (even dangerous)
+ *   dontAsk          — same as bypass, but suppresses all prompts
+ *   bubble           — sandbox mode
  *
- * Model:
- *   - A rule set is consulted in order; first match wins.
- *   - Each rule targets a tool (+ optional pattern over an input "fingerprint").
- *   - Rule action ∈ allow | deny | ask. `ask` defers to an injected approver.
- *   - A coarse mode governs the default action when no rule matches:
- *       auto — allow by default (autonomous), unless a rule says ask/deny
- *       ask  — prompt by default, unless a rule says allow/deny
- *       deny — block by default, unless a rule explicitly allows
+ * Permission Rules:
+ *   "Bash(npm *)"    → allow all npm commands
+ *   "Bash(git *)"    → allow all git commands
+ *   "Read(src/**)"   → allow reading from src/
+ *   "Edit(*.ts)"     → allow editing TypeScript files
  *
- * The approver is injected (DI) so the checker stays UI-agnostic: the CLI wires
- * a yes/no readline prompt; tests/CI wire an auto-resolver; sub-agents inherit
- * the parent's approver or fall back to a safe deny.
- *
- * Fingerprinting: rather than exposing raw input JSON to patterns (fragile), we
- * derive a human-readable fingerprint per tool — e.g. the Bash command string,
- * or the file path for Write/Edit. Patterns are matched as substring tests,
- * which is robust and easy to author.
+ * Shift+Tab cycling:
+ *   default → acceptEdits → plan → auto → bypassPermissions → default
  */
 
-import type { ToolContext } from './types.js'
 import { str } from './strings.js'
 
-export type PermissionMode = 'auto' | 'ask' | 'deny'
-export type PermissionAction = 'allow' | 'deny' | 'ask'
+// ── Types ───────────────────────────────────────────────────────────────────
+
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'plan'
+  | 'auto'
+  | 'bypassPermissions'
+  | 'dontAsk'
+  | 'bubble'
+  | 'ask'
+  | 'deny'
+
+export type PermissionProfile = 'safe' | 'standard' | 'autonomous'
+
+const PROFILE_MODES: Record<PermissionProfile, PermissionMode> = {
+  safe: 'default',
+  standard: 'acceptEdits',
+  autonomous: 'auto',
+}
+
+export function resolvePermissionMode(
+  profile?: PermissionProfile,
+  legacyMode?: PermissionMode,
+): PermissionMode {
+  if (profile) return PROFILE_MODES[profile]
+  return legacyMode ?? PROFILE_MODES.standard
+}
+
+export type PermissionBehavior = 'allow' | 'deny' | 'ask'
 
 export interface PermissionRule {
-  /** Tool name to match. Omit / "*" matches every tool. */
   tool?: string
-  /**
-   * Substring matched against the tool's fingerprint (the Bash command, or the
-   * file path for Write/Edit, etc.). Omit to match any input for this tool.
-   */
   pattern?: string
-  action: PermissionAction
+  action: PermissionBehavior
 }
 
 export interface PermissionCheckInput {
@@ -64,35 +82,139 @@ export interface PermissionDecision {
   reason: string
 }
 
-/**
- * A sensible default deny-ish rule set: operations that are commonly destructive
- * or hard to reverse are escalated to `ask` even in autonomous mode. Consumers
- * extend/override this in their config.
- */
-export const DEFAULT_PERMISSION_RULES: PermissionRule[] = [
-  // Filesystem destruction
-  { tool: 'Bash', pattern: 'rm -rf', action: 'ask' },
-  { tool: 'Bash', pattern: 'rm -fr', action: 'ask' },
-  { tool: 'Bash', pattern: 'mkfs', action: 'ask' },
-  { tool: 'Bash', pattern: 'dd if=', action: 'ask' },
-  { tool: 'Bash', pattern: ' > /dev/sd', action: 'ask' },
-  // Privilege escalation
-  { tool: 'Bash', pattern: 'sudo ', action: 'ask' },
-  { tool: 'Bash', pattern: 'chmod 777', action: 'ask' },
-  { tool: 'Bash', pattern: 'chown ', action: 'ask' },
-  // Remote code execution / piping to shell
-  { tool: 'Bash', pattern: 'curl ', action: 'ask' },
-  { tool: 'Bash', pattern: 'wget ', action: 'ask' },
-  // Force-push / history rewrite
-  { tool: 'Bash', pattern: 'git push --force', action: 'ask' },
-  { tool: 'Bash', pattern: 'git push -f', action: 'ask' },
-  { tool: 'Bash', pattern: 'git commit --amend', action: 'ask' },
+// ── Mode Cycling (Shift+Tab) ────────────────────────────────────────────────
+
+const CYCLE_ORDER: PermissionMode[] = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'auto',
+  'bypassPermissions',
+  'dontAsk',
+  'bubble',
 ]
 
-/**
- * Derive a short, human-readable fingerprint of a tool invocation for pattern
- * matching and approval prompts.
- */
+export function getNextPermissionMode(current: PermissionMode): PermissionMode {
+  const idx = CYCLE_ORDER.indexOf(current)
+  if (idx === -1) return 'default'
+  return CYCLE_ORDER[(idx + 1) % CYCLE_ORDER.length]
+}
+
+export function isValidPermissionMode(value: string): value is PermissionMode {
+  return CYCLE_ORDER.includes(value as PermissionMode)
+}
+
+export function permissionModeLabel(mode: PermissionMode): string {
+  switch (mode) {
+    case 'default':           return 'Default'
+    case 'acceptEdits':       return 'Accept Edits'
+    case 'plan':              return 'Plan Mode'
+    case 'auto':              return 'Auto'
+    case 'bypassPermissions': return 'Bypass'
+    case 'dontAsk':           return 'Don\'t Ask'
+    case 'bubble':            return 'Bubble (Sandbox)'
+    case 'ask':               return 'Ask'
+    case 'deny':              return 'Deny'
+  }
+}
+
+export function permissionModeSymbol(mode: PermissionMode): string {
+  switch (mode) {
+    case 'default':           return ''
+    case 'acceptEdits':       return '>>'
+    case 'plan':              return '||'
+    case 'auto':              return '>>>'
+    case 'bypassPermissions': return '>>>>'
+    case 'dontAsk':           return '?!'
+    case 'bubble':            return '[][]'
+    case 'ask':               return '>'
+    case 'deny':              return 'X'
+  }
+}
+
+export function permissionModeDescription(mode: PermissionMode): string {
+  switch (mode) {
+    case 'default':           return 'Ask for dangerous commands, allow safe ones'
+    case 'acceptEdits':       return 'Auto-approve file edits, still gate shell commands'
+    case 'plan':              return 'Read-only analysis (no writes/edits/bash)'
+    case 'auto':              return 'Auto-approve everything except dangerous commands'
+    case 'bypassPermissions': return 'Approve everything (use with caution)'
+    case 'dontAsk':           return 'No prompts: trust the model + hooks only'
+    case 'bubble':            return 'Shell commands run in OS-level sandbox'
+    case 'ask':               return 'Ask for all tool calls'
+    case 'deny':              return 'Deny all tool calls'
+  }
+}
+
+export function isSandboxMode(mode: PermissionMode): boolean {
+  return mode === 'bubble'
+}
+
+export function isBypassMode(mode: PermissionMode): boolean {
+  return mode === 'bypassPermissions' || mode === 'dontAsk'
+}
+
+// ── Mode → behavior resolution ──────────────────────────────────────────────
+
+export function getModeBehavior(
+  mode: PermissionMode,
+  toolName: string,
+  isDangerous: boolean,
+): PermissionBehavior {
+  // Legacy aliases
+  if (mode === 'ask') return 'ask'
+  if (mode === 'deny') return 'deny'
+
+  if (mode === 'bypassPermissions') return 'allow'
+
+  if (mode === 'plan') {
+    const readOnly = ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch']
+    return readOnly.includes(toolName) ? 'allow' : 'deny'
+  }
+
+  if (mode === 'auto') {
+    return isDangerous ? 'ask' : 'allow'
+  }
+
+  if (mode === 'acceptEdits') {
+    const editTools = ['Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep']
+    if (editTools.includes(toolName)) return 'allow'
+    return isDangerous ? 'ask' : 'allow'
+  }
+
+  if (isDangerous) return 'ask'
+  return 'allow'
+}
+
+// ── Rule Engine ─────────────────────────────────────────────────────────────
+
+export function matchRule(ruleContent: string, command: string): boolean {
+  if (ruleContent.endsWith(':*')) {
+    const prefix = ruleContent.slice(0, -2)
+    return command.startsWith(prefix)
+  }
+
+  if (ruleContent.includes('*')) {
+    const regexStr = ruleContent
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*')
+    let finalRegex = regexStr
+    const unescapedStarCount = (ruleContent.match(/\*/g) || []).length
+    if (finalRegex.endsWith(' .*') && unescapedStarCount === 1) {
+      finalRegex = finalRegex.slice(0, -3) + '( .*)?'
+    }
+    try {
+      return new RegExp('^' + finalRegex + '$', 's').test(command)
+    } catch {
+      return false
+    }
+  }
+
+  return command === ruleContent
+}
+
+// ── Fingerprinting ──────────────────────────────────────────────────────────
+
 export function fingerprint(tool: string, input: Record<string, unknown>): string {
   switch (tool) {
     case 'Bash':
@@ -116,7 +238,6 @@ export function fingerprint(tool: string, input: Record<string, unknown>): strin
     case 'Agent':
       return str(input.description)
     default:
-      // Best-effort: flatten values
       return Object.values(input)
         .map((v) => str(v))
         .join(' ')
@@ -124,24 +245,72 @@ export function fingerprint(tool: string, input: Record<string, unknown>): strin
   }
 }
 
+// ── Default Rules ───────────────────────────────────────────────────────────
+
+export const DEFAULT_PERMISSION_RULES: PermissionRule[] = [
+  { tool: 'Bash', pattern: 'rm -rf', action: 'ask' },
+  { tool: 'Bash', pattern: 'rm -fr', action: 'ask' },
+  { tool: 'Bash', pattern: 'mkfs', action: 'ask' },
+  { tool: 'Bash', pattern: 'dd if=', action: 'ask' },
+  { tool: 'Bash', pattern: ' > /dev/sd', action: 'ask' },
+  { tool: 'Bash', pattern: 'sudo ', action: 'ask' },
+  { tool: 'Bash', pattern: 'chmod 777', action: 'ask' },
+  { tool: 'Bash', pattern: 'chown ', action: 'ask' },
+  { tool: 'Bash', pattern: 'curl ', action: 'ask' },
+  { tool: 'Bash', pattern: 'wget ', action: 'ask' },
+  { tool: 'Bash', pattern: 'git push --force', action: 'ask' },
+  { tool: 'Bash', pattern: 'git push -f', action: 'ask' },
+  { tool: 'Bash', pattern: 'git commit --amend', action: 'ask' },
+]
+
+// ── PermissionChecker ───────────────────────────────────────────────────────
+
 export class PermissionChecker {
-  private readonly mode: PermissionMode
+  private mode: PermissionMode
   private readonly rules: PermissionRule[]
   private readonly approver?: Approver
 
   constructor(mode: PermissionMode, rules: PermissionRule[] = [], approver?: Approver) {
     this.mode = mode
-    // Consumer rules take priority over defaults; defaults fill the gaps.
     this.rules = [...rules, ...DEFAULT_PERMISSION_RULES]
     this.approver = approver
   }
 
-  /** Decide whether a tool call may proceed. Never throws. */
+  getMode(): PermissionMode {
+    return this.mode
+  }
+
+  setMode(mode: PermissionMode): void {
+    this.mode = mode
+  }
+
+  cycleMode(): PermissionMode {
+    this.mode = getNextPermissionMode(this.mode)
+    return this.mode
+  }
+
+  formatMode(): string {
+    return permissionModeLabel(this.mode)
+  }
+
+  private matchRule(tool: string, fp: string): PermissionRule | undefined {
+    for (const rule of this.rules) {
+      if (rule.tool && rule.tool !== '*' && rule.tool !== tool) continue
+      if (rule.pattern) {
+        if (matchRule(rule.pattern, fp)) return rule
+      } else {
+        return rule
+      }
+    }
+    return undefined
+  }
+
   async check(input: PermissionCheckInput): Promise<PermissionDecision> {
     const fp = fingerprint(input.tool, input.input)
-
     const matched = this.matchRule(input.tool, fp)
-    const action = this.resolveAction(matched?.action)
+    const isDangerous = input.tool === 'Bash' && this.isDangerousCommand(str(input.input.command))
+
+    const action = matched?.action ?? getModeBehavior(this.mode, input.tool, isDangerous)
 
     if (action === 'allow') {
       return { allowed: true, reason: 'allowed' }
@@ -150,52 +319,20 @@ export class PermissionChecker {
       return { allowed: false, reason: `denied by ${matched ? 'rule' : 'mode'} (${this.mode})` }
     }
 
-    // action === 'ask'
-    if (!this.approver) {
-      // No approver wired (headless / sub-agent): fail safe → deny.
-      return { allowed: false, reason: 'approval required but no approver available' }
+    if (this.approver) {
+      try {
+        const approved = await this.approver({ tool: input.tool, fingerprint: fp, matchedRule: matched })
+        return { allowed: approved, reason: approved ? 'approved by user' : 'denied by user' }
+      } catch {
+        return { allowed: false, reason: 'denied_by_approver_error' }
+      }
     }
-    let approved: boolean
-    try {
-      approved = await this.approver({ tool: input.tool, fingerprint: fp, matchedRule: matched })
-    } catch {
-      approved = false
-    }
-    return approved
-      ? { allowed: true, reason: 'approved by user' }
-      : { allowed: false, reason: 'denied by user' }
+
+    return { allowed: false, reason: 'requires_approval (no approver wired)' }
   }
 
-  private matchRule(tool: string, fp: string): PermissionRule | undefined {
-    return this.rules.find((r) => {
-      if (r.tool && r.tool !== '*' && r.tool !== tool) return false
-      if (r.pattern && !fp.includes(r.pattern)) return false
-      return true
-    })
+  private isDangerousCommand(cmd: string): boolean {
+    const dangerous = ['rm -rf', 'rm -fr', 'sudo ', 'chmod 777', 'git push --force', 'git push -f']
+    return dangerous.some((d) => cmd.includes(d))
   }
-
-  private resolveAction(ruleAction?: PermissionAction): PermissionAction {
-    if (ruleAction) return ruleAction
-    switch (this.mode) {
-      case 'deny':
-        return 'deny'
-      case 'ask':
-        return 'ask'
-      case 'auto':
-      default:
-        return 'allow'
-    }
-  }
-}
-
-/**
- * Build a default PermissionChecker from a ToolContext's permissionMode.
- * Useful when a tool wants to self-gate without a full engine-configured checker.
- */
-export function checkerFromContext(
-  ctx: ToolContext,
-  rules?: PermissionRule[],
-  approver?: Approver,
-): PermissionChecker {
-  return new PermissionChecker(ctx.permissionMode, rules, approver)
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { partitionToolCalls } from '../src/core/engine.js'
+import { partitionToolCalls } from '../src/core/toolRuntime/toolScheduler.js'
 import {
   calculateContextState,
   estimateTokens,
@@ -100,7 +100,14 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('MySafeB', {}),
       makeParsedToolCall('MyUnsafe', {}),
     ]
-    const batches = partitionToolCalls(calls, new Set(['MySafeA', 'MySafeB']))
+    // partitionToolCalls now accepts Tool[] and uses metadata.claims for parallelization
+    // For this test, we pass tools with claims to enable parallel batching
+    const mockTools = [
+      { name: 'MySafeA', metadata: { claims: () => [{ type: 'file', key: 'a', access: 'read' as const }] } },
+      { name: 'MySafeB', metadata: { claims: () => [{ type: 'file', key: 'b', access: 'read' as const }] } },
+      { name: 'MyUnsafe' },
+    ] as any[]
+    const batches = partitionToolCalls(calls, mockTools)
     // MySafeA + MySafeB merge into one parallel batch; MyUnsafe is serial
     expect(batches).toHaveLength(2)
     expect(batches[0].safe).toBe(true)

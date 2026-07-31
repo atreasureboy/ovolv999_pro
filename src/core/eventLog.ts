@@ -17,6 +17,7 @@ export type EventType =
   | 'invoke_completed'
   | 'memory_write'
   | 'context_compact'
+  | 'snip_compact'
   | 'module_flag'
   | 'module_error'
   | 'permission'
@@ -25,6 +26,12 @@ export type EventType =
   | 'error'
   | 'user_input'
   | 'user_interrupt'
+  | 'run_started'
+  | 'run_completed'
+  | 'run_failed'
+  | 'model_requested'
+  | 'model_completed'
+  | 'stall_detected'
 
 export interface EventLogEntry {
   id: string

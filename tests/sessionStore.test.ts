@@ -35,7 +35,7 @@ describe('saveConversation / loadConversation', () => {
     expect(snap!.messages).toHaveLength(2)
     expect(snap!.messages[0].content).toBe('hello')
     expect(snap!.model).toBe('gpt-4o')
-    expect(snap!.version).toBe(1)
+    expect(snap!.version).toBe(2)
   })
 
   it('returns null when no snapshot exists', () => {

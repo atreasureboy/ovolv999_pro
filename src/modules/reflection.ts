@@ -107,14 +107,14 @@ export class ReflectionModule implements AgentModule {
   }
 
   private serializeForReflection(
-    messages: { role: string; content: string | null; tool_calls?: unknown[] }[],
+    messages: { role: string; content: string | null | unknown[]; tool_calls?: unknown[] }[],
   ): string {
     const parts: string[] = []
     for (const msg of messages.slice(-30)) {
       if (msg.role === 'user' && typeof msg.content === 'string') {
         parts.push(`[USER]: ${msg.content.slice(0, 200)}`)
       } else if (msg.role === 'assistant') {
-        if (msg.content) parts.push(`[ASSISTANT]: ${msg.content.slice(0, 200)}`)
+        if (msg.content) parts.push(`[ASSISTANT]: ${String(msg.content).slice(0, 200)}`)
         if (msg.tool_calls?.length) {
           const names = (msg.tool_calls as Array<{ function: { name: string } }>)
             .map((tc) => tc.function.name)

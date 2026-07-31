@@ -45,6 +45,8 @@ export interface AgentConfig {
   modules?: ModuleConfig
   /** Tool whitelist — undefined = all registered tools */
   tools?: string[]
+  /** Tool blacklist — explicitly disallowed tools */
+  disallowedTools?: string[]
   /** Skill IDs (future — for lazy-loaded skill system) */
   skills?: string[]
   /** Execution limits */
