@@ -22,7 +22,7 @@ export interface ContextManagerDeps {
 }
 
 export class ContextManager {
-  private readonly deps: ContextManagerDeps
+  private deps: ContextManagerDeps
   private systemPromptTokens = 0
   private resolvedContextWindow: number | null = null
 
@@ -45,9 +45,19 @@ export class ContextManager {
     this.systemPromptTokens = n
   }
 
+  setMaxContextTokens(tokens: number): void {
+    if (this.deps.maxContextTokens === tokens) return
+    this.deps = { ...this.deps, maxContextTokens: tokens }
+    this.resolvedContextWindow = null
+  }
+
+  setMaxOutputTokens(tokens: number): void {
+    this.deps = { ...this.deps, maxOutputTokens: tokens }
+  }
+
   onModelChanged(model: string): void {
     if (this.deps.model === model) return
-    ;(this as unknown as { deps: ContextManagerDeps }).deps = { ...this.deps, model }
+    this.deps = { ...this.deps, model }
     this.resolvedContextWindow = null
   }
 
@@ -109,6 +119,9 @@ export class ContextManager {
   }
 
   estimateSystemPromptTokens(systemPrompt: string): number {
-    return Math.ceil(systemPrompt.length / 3.5) + 20
+    const chars = systemPrompt.length
+    const cjkCount = (systemPrompt.match(/[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/g) || []).length
+    const latinCount = chars - cjkCount
+    return Math.ceil(latinCount / 3.5 + cjkCount / 1.5) + 20
   }
 }

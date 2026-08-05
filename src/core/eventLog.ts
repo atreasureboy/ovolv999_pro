@@ -8,6 +8,7 @@
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import { appendFile } from 'fs/promises'
 
 export type EventType =
   | 'tool_call'
@@ -74,11 +75,32 @@ export class EventLog {
       tags,
     }
     try {
-      appendFileSync(this.filePath, JSON.stringify(entry) + '\n', 'utf8')
+      const line = JSON.stringify(entry) + '\n'
+      appendFileSync(this.filePath, line, 'utf8')
     } catch {
       // silently ignore — event log must never break the engine
     }
     return entry
+  }
+
+  /** Non-blocking async append (fire-and-forget) */
+  appendAsync(
+    type: EventType,
+    source: string,
+    detail: Record<string, unknown>,
+    tags?: string[],
+  ): void {
+    const entry: EventLogEntry = {
+      id: nextId(),
+      timestamp: new Date().toISOString(),
+      type,
+      source,
+      detail,
+      tags,
+    }
+    appendFile(this.filePath, JSON.stringify(entry) + '\n', 'utf8').catch(() => {
+      // silently ignore
+    })
   }
 
   /** Read all events from the file */

@@ -6,9 +6,11 @@
  * This prevents accidental changes and makes diffs reviewable.
  */
 
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { EDIT_FILE_DESCRIPTION } from '../prompts/tools.js'
+import { atomicWrite } from '../core/atomicWrite.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 export interface EditFileInput {
   file_path: string
@@ -51,7 +53,7 @@ export class FileEditTool implements Tool {
     },
   }
 
-  async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const { file_path, old_string, new_string, replace_all } = input as unknown as EditFileInput
 
     if (!file_path || typeof file_path !== 'string') {
@@ -68,6 +70,15 @@ export class FileEditTool implements Tool {
         content: 'Error: old_string and new_string are identical — no change needed',
         isError: true,
       }
+    }
+    if (containsNullByte(file_path)) {
+      return { content: 'Error: file_path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(file_path)) {
+      return { content: 'Error: path traversal detected in file_path', isError: true }
+    }
+    if (!isPathWithin(file_path, context.cwd)) {
+      return { content: `Error: file_path must be within the project directory (${context.cwd})`, isError: true }
     }
 
     try {
@@ -95,7 +106,7 @@ export class FileEditTool implements Tool {
         ? content.split(old_string).join(new_string)
         : content.replace(old_string, new_string)
 
-      await writeFile(file_path, newContent, 'utf8')
+      await atomicWrite(file_path, newContent, { encoding: 'utf8' })
 
       const count = replace_all ? occurrences : 1
       return {

@@ -16,8 +16,8 @@ describe('Hybrid Vector & Tag SemanticMemory', () => {
     await rm(projectDir, { recursive: true, force: true })
   })
 
-  it('ranks memories by hybrid vector and keyword relevance', () => {
-    memory.write({
+  it('ranks memories by hybrid vector and keyword relevance', async () => {
+    await memory.write({
       content: 'TypeScript execution engine uses streaming OpenAI API',
       tags: ['engine', 'ts'],
       source: 'user_stated',
@@ -25,7 +25,7 @@ describe('Hybrid Vector & Tag SemanticMemory', () => {
       confidence: 1.0,
     })
 
-    memory.write({
+    await memory.write({
       content: 'Python scripts process dataset files in parallel',
       tags: ['python', 'data'],
       source: 'tool_observed',
@@ -33,7 +33,7 @@ describe('Hybrid Vector & Tag SemanticMemory', () => {
       confidence: 0.8,
     })
 
-    const results = memory.search({ query: 'TypeScript streaming engine' })
+    const results = await memory.search({ query: 'TypeScript streaming engine' })
     expect(results.length).toBeGreaterThan(0)
     expect(results[0].content).toContain('TypeScript execution engine')
   })

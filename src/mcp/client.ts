@@ -19,6 +19,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import type { Logger } from '../core/logger.js'
+import { safeEnv } from '../core/envSafety.js'
 
 /** MCP tool descriptor as returned by tools/list. */
 export interface McpToolDescriptor {
@@ -89,7 +90,7 @@ export class McpClient {
     try {
       this.proc = spawn(command, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...(env ?? {}) },
+        env: safeEnv(env),
         cwd: cwd ?? process.cwd(),
       })
     } catch (err) {

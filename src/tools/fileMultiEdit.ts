@@ -3,8 +3,10 @@
  * Allows non-contiguous block edits in one tool call to minimize token roundtrips.
  */
 
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
+import { atomicWrite } from '../core/atomicWrite.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 export interface ReplacementChunk {
   old_string: string
@@ -71,7 +73,7 @@ export class FileMultiEditTool implements Tool {
     },
   }
 
-  async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const { file_path, chunks } = input as unknown as MultiEditFileInput
 
     if (!file_path || typeof file_path !== 'string') {
@@ -79,6 +81,15 @@ export class FileMultiEditTool implements Tool {
     }
     if (!Array.isArray(chunks) || chunks.length === 0) {
       return { content: 'Error: chunks array must be a non-empty array', isError: true }
+    }
+    if (containsNullByte(file_path)) {
+      return { content: 'Error: file_path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(file_path)) {
+      return { content: 'Error: path traversal detected in file_path', isError: true }
+    }
+    if (!isPathWithin(file_path, context.cwd)) {
+      return { content: `Error: file_path must be within the project directory (${context.cwd})`, isError: true }
     }
 
     try {
@@ -102,7 +113,12 @@ export class FileMultiEditTool implements Tool {
         }
 
         if (start_line !== undefined || end_line !== undefined) {
-          // Scope replacement to line range
+          if (start_line !== undefined && end_line !== undefined && start_line > end_line) {
+            return {
+              content: `Error in chunk [${i + 1}]: start_line (${start_line}) must be <= end_line (${end_line})`,
+              isError: true,
+            }
+          }
           const startIdx = Math.max(0, (start_line ?? 1) - 1)
           const endIdx = Math.min(lines.length, end_line ?? lines.length)
           const targetSlice = lines.slice(startIdx, endIdx).join('\n')
@@ -156,7 +172,7 @@ export class FileMultiEditTool implements Tool {
         }
       }
 
-      await writeFile(file_path, content, 'utf8')
+      await atomicWrite(file_path, content, { encoding: 'utf8' })
 
       return {
         content: `Successfully applied ${chunks.length} edit chunks (${editCount} replacements) to ${file_path}`,

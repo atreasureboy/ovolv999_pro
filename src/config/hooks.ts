@@ -11,6 +11,7 @@
 import { execSync } from 'child_process'
 import type { HooksConfig, HookEntry } from './settings.js'
 import type { IHookRunner, TurnResult } from '../core/types.js'
+import { safeEnv } from '../core/envSafety.js'
 
 function matchesHook(entry: HookEntry, toolName: string): boolean {
   if (!entry.matcher) return true
@@ -25,7 +26,7 @@ function matchesHook(entry: HookEntry, toolName: string): boolean {
 function runCommand(command: string, env: Record<string, string>): void {
   try {
     execSync(command, {
-      env: { ...process.env, ...env },
+      env: { ...safeEnv(), ...env },
       encoding: 'utf8',
       timeout: 10_000,
       stdio: 'ignore',

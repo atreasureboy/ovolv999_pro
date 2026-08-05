@@ -45,7 +45,10 @@ import { fileURLToPath } from 'url'
         const eq = t.indexOf('=')
         if (eq <= 0) continue
         const key = t.slice(0, eq).trim()
-        const val = t.slice(eq + 1).trim()
+        let val = t.slice(eq + 1).trim()
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1)
+        }
         if (!process.env[key]) process.env[key] = val
       }
     } catch {
@@ -321,7 +324,7 @@ async function runPlanMode(
   try {
     await planEngine.runTurn(task, [...history])
   } catch (err: unknown) {
-    renderer.error(`Plan error: ${(err as Error).message}`)
+    renderer.error(`Plan error: ${err instanceof Error ? err.message : String(err)}`)
     return
   }
 
@@ -344,7 +347,7 @@ async function runPlanMode(
       const elapsed = ((Date.now() - startMs) / 1000).toFixed(1)
       renderer.info(`Done in ${elapsed}s · ${result.reason}`)
     } catch (err: unknown) {
-      renderer.error(`Execution error: ${(err as Error).message}`)
+      renderer.error(`Execution error: ${err instanceof Error ? err.message : String(err)}`)
     }
     updateProgressLog(cwd, 'idle', 'waiting for next task')
   } else {
@@ -533,8 +536,9 @@ async function runRepl(
         const { result, newHistory } = await engine.runTurn(currentPrompt, currentHistory)
 
         // Update shared history with latest turn
+        const trimmed = trimHistoryForNextTurn(newHistory)
         history.length = 0
-        history.push(...trimHistoryForNextTurn(newHistory))
+        history.push(...trimmed)
         currentHistory = [...history]
         // Persist a resumable snapshot (--resume can reload this).
         saveConversation(engine.getSessionDir() ?? '', history, engine.getModel())
@@ -574,7 +578,7 @@ async function runRepl(
         break
       }
     } catch (err: unknown) {
-      const error = err as Error
+      const error = err instanceof Error ? err : new Error(String(err))
       if (error.name !== 'AbortError') {
         renderer.error(`Error: ${error.message}`)
       }
@@ -677,7 +681,7 @@ async function runRepl(
 // Single-shot task
 // ─────────────────────────────────────────────────────────────
 
-async function runTask(
+async function runSingleTask(
   engine: ExecutionEngine,
   renderer: Renderer,
   task: string,
@@ -794,7 +798,7 @@ async function main(): Promise<void> {
     if (alwaysAllow.has(ruleKey)) return true
     // Headless / non-TTY: cannot prompt → fail safe (deny).
     if (!process.stdin.isTTY) return false
-    const fp = req.fingerprint.slice(0, 100)
+    const fp = req.tool === 'Bash' ? '[shell command]' : req.fingerprint.slice(0, 100)
     renderer.warn(`审批请求: ${req.tool} — ${fp}`)
     process.stdout.write(`  允许执行? [y]es / [n]o / [a]lways 允许此类: `)
     const { text } = await input.readLine('')
@@ -982,7 +986,7 @@ async function main(): Promise<void> {
     if (cleanedUp) return
     cleanedUp = true
     tmuxLayout.destroy()
-    mcpResult?.close().catch(() => undefined)
+    Promise.resolve(mcpResult?.close()).catch(() => undefined)
   }
   process.on('exit', cleanup)
   process.on('SIGTERM', () => {
@@ -1000,7 +1004,7 @@ async function main(): Promise<void> {
     if (piped) {
       hookRunner.runUserPromptSubmit(piped)
       input.close()
-      await runTask(engine, renderer, piped, cwd)
+      await runSingleTask(engine, renderer, piped, cwd)
       return
     }
   }
@@ -1009,7 +1013,7 @@ async function main(): Promise<void> {
   if (task) {
     hookRunner.runUserPromptSubmit(task)
     input.close()
-    await runTask(engine, renderer, task, cwd)
+    await runSingleTask(engine, renderer, task, cwd)
     return
   }
 
@@ -1032,6 +1036,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`\x1b[31mFatal:\x1b[0m ${(err as Error).message}\n`)
+  process.stderr.write(`\x1b[31mFatal:\x1b[0m ${err instanceof Error ? err.message : String(err)}\n`)
   process.exit(1)
 })

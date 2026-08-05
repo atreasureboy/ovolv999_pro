@@ -3,6 +3,9 @@ import {
   PermissionChecker,
   fingerprint,
   DEFAULT_PERMISSION_RULES,
+  getModeBehavior,
+  getNextPermissionMode,
+  matchRule,
   type Approver,
 } from '../src/core/permission.js'
 
@@ -109,5 +112,70 @@ describe('PermissionChecker — rules', () => {
     expect(patterns).toContain('rm -rf')
     expect(patterns).toContain('sudo ')
     expect(patterns).toContain('git push --force')
+  })
+})
+
+describe('matchRule', () => {
+  it('matches exact string', () => {
+    expect(matchRule('rm -rf', 'rm -rf')).toBe(true)
+    expect(matchRule('rm -rf', 'echo hello')).toBe(false)
+  })
+
+  it('matches wildcard suffix :*', () => {
+    expect(matchRule('npm :*', 'npm install')).toBe(true)
+    expect(matchRule('npm :*', 'npm test')).toBe(true)
+    expect(matchRule('npm :*', 'npx test')).toBe(false)
+  })
+
+  it('matches glob patterns', () => {
+    expect(matchRule('src/*.ts', 'src/file.ts')).toBe(true)
+    expect(matchRule('src/*.ts', 'src/file.js')).toBe(false)
+  })
+})
+
+describe('getModeBehavior', () => {
+  it('plan mode denies non-read tools', () => {
+    expect(getModeBehavior('plan', 'Read', false)).toBe('allow')
+    expect(getModeBehavior('plan', 'Bash', false)).toBe('deny')
+    expect(getModeBehavior('plan', 'Write', false)).toBe('deny')
+  })
+
+  it('auto mode allows safe, asks for dangerous', () => {
+    expect(getModeBehavior('auto', 'Read', false)).toBe('allow')
+    expect(getModeBehavior('auto', 'Bash', true)).toBe('ask')
+  })
+
+  it('acceptEdits allows edit tools', () => {
+    expect(getModeBehavior('acceptEdits', 'Edit', false)).toBe('allow')
+    expect(getModeBehavior('acceptEdits', 'Write', false)).toBe('allow')
+    expect(getModeBehavior('acceptEdits', 'Bash', true)).toBe('ask')
+  })
+
+  it('bypassPermissions allows everything', () => {
+    expect(getModeBehavior('bypassPermissions', 'Bash', true)).toBe('allow')
+  })
+
+  it('dontAsk allows everything', () => {
+    expect(getModeBehavior('dontAsk', 'Bash', true)).toBe('allow')
+  })
+
+  it('ask mode always asks', () => {
+    expect(getModeBehavior('ask', 'Read', false)).toBe('ask')
+  })
+
+  it('deny mode always denies', () => {
+    expect(getModeBehavior('deny', 'Read', false)).toBe('deny')
+  })
+})
+
+describe('getNextPermissionMode', () => {
+  it('cycles through all modes', () => {
+    expect(getNextPermissionMode('default')).toBe('acceptEdits')
+    expect(getNextPermissionMode('ask')).toBe('deny')
+    expect(getNextPermissionMode('deny')).toBe('default')
+  })
+
+  it('returns default for unknown mode', () => {
+    expect(getNextPermissionMode('unknown' as never)).toBe('default')
   })
 })

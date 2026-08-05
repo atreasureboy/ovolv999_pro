@@ -92,6 +92,8 @@ const CYCLE_ORDER: PermissionMode[] = [
   'bypassPermissions',
   'dontAsk',
   'bubble',
+  'ask',
+  'deny',
 ]
 
 export function getNextPermissionMode(current: PermissionMode): PermissionMode {
@@ -165,7 +167,7 @@ export function getModeBehavior(
   if (mode === 'ask') return 'ask'
   if (mode === 'deny') return 'deny'
 
-  if (mode === 'bypassPermissions') return 'allow'
+  if (mode === 'bypassPermissions' || mode === 'dontAsk') return 'allow'
 
   if (mode === 'plan') {
     const readOnly = ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch']
@@ -332,7 +334,12 @@ export class PermissionChecker {
   }
 
   private isDangerousCommand(cmd: string): boolean {
-    const dangerous = ['rm -rf', 'rm -fr', 'sudo ', 'chmod 777', 'git push --force', 'git push -f']
-    return dangerous.some((d) => cmd.includes(d))
+    const dangerous = [
+      'rm -rf', 'rm -fr', 'sudo ', 'chmod 777', 'git push --force', 'git push -f',
+      'mkfs', 'dd if=', '> /dev/sd', 'chown ', 'curl ', 'wget ',
+      'git commit --amend',
+    ]
+    const normalized = cmd.replace(/\s+/g, ' ').trim()
+    return dangerous.some((d) => normalized.includes(d))
   }
 }

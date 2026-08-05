@@ -41,6 +41,7 @@ import { SharedRuntimeState } from './runtime/sharedState.js'
 import { ProgressMonitor } from './runtime/progressMonitor.js'
 import { CostTracker } from './costTracker.js'
 import { BackgroundTaskManager } from './backgroundTaskManager.js'
+import { AsyncTaskManager } from './taskManager.js'
 import { ResourceScheduler } from './resourceScheduler.js'
 import { capabilitiesForModel } from './modelCapabilities.js'
 import { buildExecutionContext, type ExecutionContext } from './executionContext.js'
@@ -99,6 +100,7 @@ export class ExecutionEngine {
   private progressMonitor: ProgressMonitor
   private costTracker: CostTracker
   private backgroundTaskManager: BackgroundTaskManager
+  private asyncTaskManager: AsyncTaskManager
   private resourceScheduler: ResourceScheduler
 
   // ── New subsystems ──
@@ -145,6 +147,7 @@ export class ExecutionEngine {
     this.progressMonitor = new ProgressMonitor()
     this.costTracker = new CostTracker()
     this.backgroundTaskManager = new BackgroundTaskManager(config.sessionDir)
+    this.asyncTaskManager = new AsyncTaskManager()
     this.resourceScheduler = new ResourceScheduler()
 
     this.contextManager = new ContextManager({
@@ -226,16 +229,10 @@ export class ExecutionEngine {
     // Use model capabilities to set maxContextTokens if not configured
     if (!config.maxContextTokens) {
       const caps = capabilitiesForModel(config.model)
-      this.contextManager = new ContextManager({
-        client: this.client,
-        model: config.model,
-        maxContextTokens: caps.maxContext,
-        maxOutputTokens: config.maxOutputTokens ?? caps.maxOutput,
-        sessionDir: config.sessionDir,
-        renderer,
-        eventLog: config.eventLog,
-        hookRunner: config.hookRunner,
-      })
+      this.contextManager.setMaxContextTokens(caps.maxContext)
+      if (!config.maxOutputTokens) {
+        this.contextManager.setMaxOutputTokens(caps.maxOutput)
+      }
     }
   }
 
@@ -377,7 +374,8 @@ export class ExecutionEngine {
       }
     } catch (err: unknown) {
       this.renderer.stopSpinner()
-      this.eventEmitter.emit({ type: 'MODEL_FAILED', error: (err as Error).message })
+      const errMsg = err instanceof Error ? err.message : String(err)
+      this.eventEmitter.emit({ type: 'MODEL_FAILED', error: errMsg })
       throw err
     }
   }
@@ -401,6 +399,7 @@ export class ExecutionEngine {
       },
       eventLog: this.eventLog,
       backgroundTaskManager: this.backgroundTaskManager,
+      asyncTaskManager: this.asyncTaskManager,
       execution,
       workingState: this.workingState,
       ...modulePatches,
@@ -479,7 +478,7 @@ export class ExecutionEngine {
       availableToolNames: exposedTools.map((t) => t.name),
     })
 
-    let result: TurnResult
+    let result: TurnResult = { stopped: true, reason: 'max_iterations', output: '' }
     let lastToolName: string | undefined
     try {
       while (iterations < this.config.maxIterations) {
@@ -587,7 +586,7 @@ export class ExecutionEngine {
             input = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
           } catch (err) {
             input = {}
-            parseError = (err as Error).message
+            parseError = err instanceof Error ? err.message : String(err)
           }
           return { tc, input, parseError }
         })
@@ -613,14 +612,14 @@ export class ExecutionEngine {
         }
       }
 
-      if (!result!) {
+      if (!result) {
         this.renderer.warn(`Max iterations (${this.config.maxIterations}) reached`)
         this.eventEmitter.emit({ type: 'MAX_ITERATIONS_REACHED', maxIterations: this.config.maxIterations })
         result = { stopped: true, reason: 'max_iterations', output: finalOutput }
       }
     } catch (err) {
-      const errMsg = (err as Error).message || String(err)
-      this.config.hookRunner?.runOnError?.(err as Error, {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      this.config.hookRunner?.runOnError?.(err instanceof Error ? err : new Error(errMsg), {
         turnNumber: iterations,
         lastToolName,
       })
@@ -649,7 +648,7 @@ export class ExecutionEngine {
       } catch (err) {
         this.eventLog?.append('module_error', module.name, {
           stage: 'onComplete',
-          error: (err as Error).message,
+          error: err instanceof Error ? err.message : String(err),
         })
       }
     }

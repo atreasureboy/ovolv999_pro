@@ -8,6 +8,7 @@ import type { PermissionChecker } from './permission.js'
 import type { PricingConfig } from '../config/agentConfig.js'
 import type { ResourceClaim } from './resourceScheduler.js'
 import type { BackgroundTaskManager } from './backgroundTaskManager.js'
+import type { AsyncTaskManager } from './taskManager.js'
 import type { ExecutionContext } from './executionContext.js'
 import type { WorkingState } from './workingState.js'
 import type { TaskIntent } from './taskIntent.js'
@@ -116,6 +117,7 @@ export interface ToolContext {
   availableToolNames?: string[]
   excludedTools?: string[]
   backgroundTaskManager?: BackgroundTaskManager
+  asyncTaskManager?: AsyncTaskManager
   execution?: ExecutionContext
   workingState?: WorkingState
 }

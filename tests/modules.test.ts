@@ -22,8 +22,8 @@ describe('SemanticMemory', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('writes and reads back entries', () => {
-    const entry = mem.write({
+  it('writes and reads back entries', async () => {
+    const entry = await mem.write({
       content: 'Always use tabs not spaces',
       tags: ['convention'],
       source: 'user_stated',
@@ -31,54 +31,52 @@ describe('SemanticMemory', () => {
       timestamp: new Date().toISOString(),
     })
     expect(entry.id).toBeTruthy()
-    expect(mem.readAll()).toHaveLength(1)
+    expect(await mem.readAll()).toHaveLength(1)
   })
 
-  it('deduplicates by content hash', () => {
-    mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
-    mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.8, timestamp: '' })
-    expect(mem.readAll()).toHaveLength(1)
+  it('deduplicates by content hash', async () => {
+    await mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
+    await mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.8, timestamp: '' })
+    expect(await mem.readAll()).toHaveLength(1)
     // Higher confidence wins
-    expect(mem.readAll()[0].confidence).toBe(0.9)
+    expect((await mem.readAll())[0].confidence).toBe(0.9)
   })
 
-  it('source priority: user_stated overrides agent_inferred', () => {
-    // Write agent_inferred first
-    mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'agent_inferred', confidence: 0.9, timestamp: '' })
-    // Try to override with tool_observed (lower priority) — should NOT override
-    mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'tool_observed', confidence: 1.0, timestamp: '' })
-    expect(mem.readAll()).toHaveLength(1)
-    expect(mem.readAll()[0].source).toBe('agent_inferred')
+  it('source priority: user_stated overrides agent_inferred', async () => {
+    await mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'agent_inferred', confidence: 0.9, timestamp: '' })
+    await mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'tool_observed', confidence: 1.0, timestamp: '' })
+    expect(await mem.readAll()).toHaveLength(1)
+    expect((await mem.readAll())[0].source).toBe('agent_inferred')
   })
 
-  it('source priority: user_stated overrides existing agent_inferred', () => {
-    mem.write({ content: 'Use pnpm', tags: [], source: 'agent_inferred', confidence: 0.5, timestamp: '' })
-    mem.write({ content: 'Use pnpm', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
-    expect(mem.readAll()).toHaveLength(1)
-    expect(mem.readAll()[0].source).toBe('user_stated')
+  it('source priority: user_stated overrides existing agent_inferred', async () => {
+    await mem.write({ content: 'Use pnpm', tags: [], source: 'agent_inferred', confidence: 0.5, timestamp: '' })
+    await mem.write({ content: 'Use pnpm', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
+    expect(await mem.readAll()).toHaveLength(1)
+    expect((await mem.readAll())[0].source).toBe('user_stated')
   })
 
-  it('searches by keywords', () => {
-    mem.write({ content: 'TypeScript strict mode is recommended', tags: ['ts'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
-    mem.write({ content: 'Use ESLint for linting', tags: ['lint'], source: 'agent_inferred', confidence: 0.7, timestamp: '' })
-    const results = mem.search({ keywords: ['typescript'] })
+  it('searches by keywords', async () => {
+    await mem.write({ content: 'TypeScript strict mode is recommended', tags: ['ts'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
+    await mem.write({ content: 'Use ESLint for linting', tags: ['lint'], source: 'agent_inferred', confidence: 0.7, timestamp: '' })
+    const results = await mem.search({ keywords: ['typescript'] })
     expect(results).toHaveLength(1)
     expect(results[0].content).toContain('TypeScript')
   })
 
-  it('searches by tags', () => {
-    mem.write({ content: 'entry1', tags: ['security'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
-    mem.write({ content: 'entry2', tags: ['performance'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
-    const results = mem.search({ tags: ['security'] })
+  it('searches by tags', async () => {
+    await mem.write({ content: 'entry1', tags: ['security'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
+    await mem.write({ content: 'entry2', tags: ['performance'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
+    const results = await mem.search({ tags: ['security'] })
     expect(results).toHaveLength(1)
     expect(results[0].tags).toContain('security')
   })
 
-  it('persists to disk and reloads', () => {
-    mem.write({ content: 'persisted entry', tags: ['test'], source: 'user_stated', confidence: 0.9, timestamp: '' })
+  it('persists to disk and reloads', async () => {
+    await mem.write({ content: 'persisted entry', tags: ['test'], source: 'user_stated', confidence: 0.9, timestamp: '' })
     const mem2 = new SemanticMemory(tmpDir)
-    expect(mem2.readAll()).toHaveLength(1)
-    expect(mem2.readAll()[0].content).toBe('persisted entry')
+    expect(await mem2.readAll()).toHaveLength(1)
+    expect((await mem2.readAll())[0].content).toBe('persisted entry')
   })
 })
 

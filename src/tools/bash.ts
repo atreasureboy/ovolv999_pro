@@ -12,19 +12,16 @@ import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/type
 import { BASH_DESCRIPTION } from '../prompts/tools.js'
 import { mkdirSync } from 'fs'
 import { join } from 'path'
+import { safeEnv } from '../core/envSafety.js'
 
 const MAX_OUTPUT_LENGTH = 30_000
-const DEFAULT_TIMEOUT_MS = 1_800_000 // 30 min — long-running commands default
-const MAX_TIMEOUT_MS = 14_400_000 // 4 h — max for very long tasks
-const MIN_TIMEOUT_MS = 1_000 // 1 s — sub-second timeouts are almost
-// always a unit mistake (LLM passing
-// seconds, e.g. 300 meaning "5 min").
-// Clamp up to default instead of killing
-// the command instantly.
+const DEFAULT_TIMEOUT_MS = 1_800_000
+const MAX_TIMEOUT_MS = 14_400_000
+const MIN_TIMEOUT_MS = 1_000
 
-// Shell detection — OVOGO_SHELL env overrides; otherwise bash (resolves via PATH
-// on Windows if Git Bash/WSL is installed, /bin/bash on Unix).
-const SHELL = process.env.OVOGO_SHELL || 'bash'
+const SHELL = process.platform === 'win32'
+  ? (process.env.OVOGO_SHELL || process.env.ComSpec || 'cmd.exe')
+  : (process.env.OVOGO_SHELL || 'bash')
 
 export interface BashInput {
   command: string
@@ -119,7 +116,7 @@ export class BashTool implements Tool {
         detached: true,
         stdio: 'ignore',
         cwd: context.cwd,
-        env: process.env,
+        env: safeEnv(),
       })
       child.unref()
 
@@ -212,7 +209,7 @@ export class BashTool implements Tool {
           cwd: context.cwd,
           timeout: timeoutMs,
           maxBuffer: 50 * 1024 * 1024,
-          env: { ...process.env, TERM: 'dumb' },
+          env: { ...safeEnv(), TERM: 'dumb' },
           shell: SHELL,
         },
         (err, stdout, stderr) => {
@@ -287,26 +284,28 @@ export class BashTool implements Tool {
 
         const pid = child.pid
         if (pid !== undefined) {
-          // Kill the process group (includes any subshells spawned by the command)
-          try {
-            process.kill(-pid, 'SIGTERM')
-          } catch {
+          if (process.platform === 'win32') {
             try {
               child.kill('SIGTERM')
             } catch {
               /* ignore */
             }
-          }
-          // SIGKILL fallback after 5 s for stubborn processes
-          setTimeout(() => {
+          } else {
             try {
-              process.kill(-pid, 'SIGKILL')
+              process.kill(-pid, 'SIGTERM')
             } catch {
               try {
-                child.kill('SIGKILL')
+                child.kill('SIGTERM')
               } catch {
                 /* ignore */
               }
+            }
+          }
+          setTimeout(() => {
+            try {
+              child.kill('SIGKILL')
+            } catch {
+              /* ignore */
             }
           }, 5_000)
         }

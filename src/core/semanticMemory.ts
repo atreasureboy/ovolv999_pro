@@ -9,7 +9,8 @@
  * Storage: ~/.ovogo/projects/{slug}/memory/semantic.jsonl
  */
 
-import { appendFileSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
+import { readFile, appendFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { createHash, randomUUID } from 'crypto'
 
@@ -42,7 +43,7 @@ function sourceRank(source: string): number {
 }
 
 function contentHash(content: string): string {
-  return createHash('md5').update(content).digest('hex').slice(0, 12)
+  return createHash('sha256').update(content).digest('hex')
 }
 
 function extractTermVector(text: string): Map<string, number> {
@@ -87,6 +88,7 @@ export class SemanticMemory {
   private vectors: Map<string, Map<string, number>> = new Map()
   private tagIndex: TagIndex = {}
   private loaded = false
+  private loadPromise: Promise<void> | null = null
 
   constructor(projectDir: string) {
     const memDir = join(projectDir, 'memory')
@@ -98,14 +100,24 @@ export class SemanticMemory {
     this.filePath = join(memDir, 'semantic.jsonl')
   }
 
-  private ensureLoaded(): void {
+  private async ensureLoaded(): Promise<void> {
     if (this.loaded) return
+    if (this.loadPromise) {
+      await this.loadPromise
+      return
+    }
+    this.loadPromise = this.loadFromDisk()
+    await this.loadPromise
+  }
+
+  private async loadFromDisk(): Promise<void> {
     this.loaded = true
 
     if (!existsSync(this.filePath)) return
 
     try {
-      const lines = readFileSync(this.filePath, 'utf8').trim().split('\n').filter(Boolean)
+      const content = await readFile(this.filePath, 'utf8')
+      const lines = content.trim().split('\n').filter(Boolean)
       for (const line of lines) {
         try {
           const entry = JSON.parse(line) as SemanticMemoryEntry
@@ -124,8 +136,8 @@ export class SemanticMemory {
     }
   }
 
-  write(entry: Omit<SemanticMemoryEntry, 'id'>): SemanticMemoryEntry {
-    this.ensureLoaded()
+  async write(entry: Omit<SemanticMemoryEntry, 'id'>): Promise<SemanticMemoryEntry> {
+    await this.ensureLoaded()
 
     const hash = contentHash(entry.content)
 
@@ -142,7 +154,7 @@ export class SemanticMemory {
         }
         this.entries.set(id, updated)
         this.vectors.set(id, extractTermVector(updated.content))
-        this.persistAll()
+        await this.persistAllAsync()
         return updated
       }
     }
@@ -156,27 +168,31 @@ export class SemanticMemory {
       this.tagIndex[tag].add(full.id)
     }
 
-    try {
-      appendFileSync(this.filePath, JSON.stringify(full) + '\n', 'utf8')
-    } catch {
-      /* best-effort */
-    }
+    await this.appendAsync(full)
     return full
   }
 
-  private persistAll(): void {
+  private async appendAsync(entry: SemanticMemoryEntry): Promise<void> {
+    try {
+      await appendFile(this.filePath, JSON.stringify(entry) + '\n', 'utf8')
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  private async persistAllAsync(): Promise<void> {
     try {
       const lines = Array.from(this.entries.values())
         .map((e) => JSON.stringify(e))
         .join('\n')
-      writeFileSync(this.filePath, lines + '\n', 'utf8')
+      await writeFile(this.filePath, lines + '\n', 'utf8')
     } catch {
       /* best-effort */
     }
   }
 
-  readAll(): SemanticMemoryEntry[] {
-    this.ensureLoaded()
+  async readAll(): Promise<SemanticMemoryEntry[]> {
+    await this.ensureLoaded()
     return Array.from(this.entries.values())
   }
 
@@ -184,13 +200,13 @@ export class SemanticMemory {
    * Hybrid Vector & Keyword Search Engine
    * Filter by Tag & Keyword + Hybrid Cosine Vector Score.
    */
-  search(options: {
+  async search(options: {
     query?: string
     tags?: string[]
     keywords?: string[]
     limit?: number
-  }): SemanticMemoryEntry[] {
-    this.ensureLoaded()
+  }): Promise<SemanticMemoryEntry[]> {
+    await this.ensureLoaded()
 
     let candidates: SemanticMemoryEntry[]
 
@@ -210,7 +226,7 @@ export class SemanticMemory {
       candidates = Array.from(this.entries.values())
     }
 
-    // 2. Keyword strict filter (if keywords are specified, entry must contain at least one keyword)
+    // 2. Keyword strict filter
     if (options.keywords && options.keywords.length > 0) {
       const lowerKeywords = options.keywords.map((k) => k.toLowerCase())
       candidates = candidates.filter((e) =>

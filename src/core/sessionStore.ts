@@ -8,7 +8,8 @@
  */
 
 import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
+import { isPathWithin } from './pathSecurity.js'
 import type { OpenAIMessage } from './types.js'
 
 export const CURRENT_SESSION_VERSION = 2
@@ -185,6 +186,8 @@ export function resolveSessionArg(cwd: string, arg: string): string | null {
   }
   if (existsSync(join(arg, 'conversation.json'))) return arg
   const candidate = join(cwd, 'sessions', arg)
-  if (existsSync(join(candidate, 'conversation.json'))) return candidate
+  const resolved = resolve(candidate)
+  if (!isPathWithin(resolved, join(cwd, 'sessions'))) return null
+  if (existsSync(join(resolved, 'conversation.json'))) return resolved
   return null
 }

@@ -3,10 +3,12 @@
  * Reference: src/tools/FileWriteTool/
  */
 
-import { writeFile, mkdir } from 'fs/promises'
+import { mkdir } from 'fs/promises'
 import { dirname } from 'path'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { WRITE_FILE_DESCRIPTION } from '../prompts/tools.js'
+import { atomicWrite } from '../core/atomicWrite.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 export interface WriteFileInput {
   file_path: string
@@ -38,7 +40,7 @@ export class FileWriteTool implements Tool {
     },
   }
 
-  async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const { file_path, content } = input as unknown as WriteFileInput
 
     if (!file_path || typeof file_path !== 'string') {
@@ -47,11 +49,19 @@ export class FileWriteTool implements Tool {
     if (typeof content !== 'string') {
       return { content: 'Error: content must be a string', isError: true }
     }
+    if (containsNullByte(file_path)) {
+      return { content: 'Error: file_path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(file_path)) {
+      return { content: 'Error: path traversal detected in file_path', isError: true }
+    }
+    if (!isPathWithin(file_path, context.cwd)) {
+      return { content: `Error: file_path must be within the project directory (${context.cwd})`, isError: true }
+    }
 
     try {
-      // Ensure parent directory exists
       await mkdir(dirname(file_path), { recursive: true })
-      await writeFile(file_path, content, 'utf8')
+      await atomicWrite(file_path, content, { encoding: 'utf8' })
 
       const lines = content.split('\n').length
       return {

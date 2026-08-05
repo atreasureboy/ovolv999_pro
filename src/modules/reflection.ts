@@ -82,7 +82,7 @@ export class ReflectionModule implements AgentModule {
       const parsed = parseReflection(output)
 
       for (const entry of parsed) {
-        this.semantic.write({
+        await this.semantic.write({
           content: entry.content,
           tags: entry.tags,
           source: 'agent_inferred',
@@ -203,7 +203,7 @@ export async function consolidateSession(
     const parsed = parseReflection(output)
 
     for (const entry of parsed) {
-      semantic.write({
+await semantic.write({
         content: `[session] ${entry.content}`,
         tags: entry.tags,
         source: 'consolidation',

@@ -1,7 +1,8 @@
 import { spawn, execFileSync, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
-import { writeFileSync, mkdirSync, appendFileSync } from 'fs'
+import { appendFileSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { safeEnv } from './envSafety.js'
 
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'stopped'
 
@@ -86,6 +87,7 @@ export class BackgroundTaskManager {
     const proc = spawn(shell, args, {
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: safeEnv(),
     })
 
     const task: InternalTask = {
@@ -155,6 +157,7 @@ export class BackgroundTaskManager {
 
     task.stopped = true
     const pid = task.process.pid
+    const proc = task.process
     if (pid === undefined) return false
 
     try {
@@ -165,9 +168,9 @@ export class BackgroundTaskManager {
       } else {
         try { process.kill(-pid, 'SIGTERM') } catch { /* group gone */ }
         setTimeout(() => {
-          if (task.process) {
-            try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
-          }
+          try {
+            proc.kill('SIGKILL')
+          } catch { /* already gone */ }
         }, DEFAULT_SIGKILL_GRACE_MS)
       }
     } catch {

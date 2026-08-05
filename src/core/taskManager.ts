@@ -7,6 +7,14 @@
 
 import { spawn, type ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
+import { safeEnv } from './envSafety.js'
+
+function getShell(): string {
+  if (process.platform === 'win32') {
+    return process.env.ComSpec || 'cmd.exe'
+  }
+  return process.env.OVOGO_SHELL || process.env.SHELL || '/bin/bash'
+}
 
 export interface TaskInfo {
   id: string
@@ -21,23 +29,18 @@ export interface TaskInfo {
 
 export class AsyncTaskManager {
   private tasks: Map<string, { process: ChildProcess; info: TaskInfo; logs: string[] }> = new Map()
-  private static instance: AsyncTaskManager
 
-  public static getInstance(): AsyncTaskManager {
-    if (!AsyncTaskManager.instance) {
-      AsyncTaskManager.instance = new AsyncTaskManager()
-    }
-    return AsyncTaskManager.instance
-  }
+  constructor() {}
 
   /** Spawn a new background task */
   startTask(command: string, cwd: string): TaskInfo {
     const id = `task_${randomUUID().slice(0, 8)}`
-    const shell = process.env.OVOGO_SHELL || 'bash'
+    const shell = getShell()
+    const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command]
 
-    const proc = spawn(shell, ['-c', command], {
+    const proc = spawn(shell, shellArgs, {
       cwd,
-      env: { ...process.env },
+      env: safeEnv(),
       detached: false,
     })
 

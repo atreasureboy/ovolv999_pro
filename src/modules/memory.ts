@@ -61,7 +61,7 @@ Higher-priority sources override lower ones on conflict.`,
       },
     } satisfies ToolDefinition,
 
-    execute(input: Record<string, unknown>): Promise<ToolResult> {
+    execute: async (input: Record<string, unknown>): Promise<ToolResult> => {
       const content = str(input.content)
       if (!content || content.length < 5) {
         return Promise.resolve({
@@ -78,7 +78,7 @@ Higher-priority sources override lower ones on conflict.`,
       const source = str(input.source, 'agent_inferred') as
         'user_stated' | 'agent_inferred' | 'tool_observed'
 
-      const entry = semantic.write({
+      const entry = await semantic.write({
         content: content.slice(0, 500),
         tags,
         source,
@@ -86,10 +86,10 @@ Higher-priority sources override lower ones on conflict.`,
         timestamp: new Date().toISOString(),
       })
 
-      return Promise.resolve({
+      return {
         content: `Stored in memory (id: ${entry.id}, source: ${source}, confidence: ${confidence})`,
         isError: false,
-      })
+      }
     },
   }
 }
@@ -127,7 +127,7 @@ Use this to recall past learnings, user preferences, or project conventions that
       },
     } satisfies ToolDefinition,
 
-    execute(input: Record<string, unknown>): Promise<ToolResult> {
+    execute: async (input: Record<string, unknown>): Promise<ToolResult> => {
       const query = str(input.query)
       const tags = Array.isArray(input.tags)
         ? (input.tags as unknown[]).filter((t): t is string => typeof t === 'string')
@@ -135,14 +135,14 @@ Use this to recall past learnings, user preferences, or project conventions that
       const limit = typeof input.limit === 'number' ? Math.min(input.limit, 30) : 10
 
       const keywords = query ? query.split(/\s+/).filter(Boolean) : undefined
-      const results = semantic.search({
+      const results = await semantic.search({
         keywords,
         tags: tags.length > 0 ? tags : undefined,
         limit,
       })
 
       if (results.length === 0) {
-        return Promise.resolve({ content: 'No matching memories found.', isError: false })
+        return { content: 'No matching memories found.', isError: false }
       }
 
       const lines = results.map((e, i) => {
@@ -150,10 +150,10 @@ Use this to recall past learnings, user preferences, or project conventions that
         return `${i + 1}. (${e.source}) ${e.content}${tagStr} (conf: ${e.confidence})`
       })
 
-      return Promise.resolve({
+      return {
         content: `Found ${results.length} memor${results.length === 1 ? 'y' : 'ies'}:\n\n${lines.join('\n')}`,
         isError: false,
-      })
+      }
     },
   }
 }
@@ -278,10 +278,10 @@ export class MemoryModule implements AgentModule {
     private episodic: EpisodicMemory,
   ) {}
 
-  boot(ctx: ModuleBootContext): ModuleBootResult {
+  async boot(ctx: ModuleBootContext): Promise<ModuleBootResult> {
     // Relevance-based memory retrieval (AgentOS pattern)
     // Score entries by keyword overlap with user message, inject top-K
-    const allEntries = this.semantic.readAll()
+    const allEntries = await this.semantic.readAll()
     let section = ''
 
     if (allEntries.length > 0 && ctx.userMessage) {

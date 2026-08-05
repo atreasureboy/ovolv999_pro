@@ -61,7 +61,7 @@ export class TaskTool implements Tool {
   }
 
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
-    const manager = AsyncTaskManager.getInstance()
+    const manager = context.asyncTaskManager ?? new AsyncTaskManager()
     const args = input as unknown as TaskInput
 
     let result: ToolResult
