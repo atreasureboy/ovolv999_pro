@@ -131,7 +131,7 @@ Read/Write/Edit/MultiEdit 工具必须验证所有三个检查。
 ## 构建 & 测试命令
 
 ```bash
-# 类型检查
+# 类型检查（等价 npm run typecheck）
 npx tsc --noEmit
 
 # 所有测试
@@ -140,8 +140,12 @@ npx vitest run
 # 单个测试文件
 npx vitest run tests/riskClassifier.test.ts
 
-# Lint
-npx eslint src/
+# Lint（等价 npm run lint）
+npx eslint src/ bin/ tests/
+
+# 格式化检查 / 写入
+npm run format:check
+npm run format
 
 # 运行引擎
 npx tsx bin/ovogogogo.ts
@@ -150,14 +154,15 @@ npx tsx bin/ovogogogo.ts
 ## 测试统计
 
 - 测试文件: 23
-- 测试用例: 327+
+- 测试用例: 342
 - 覆盖率目标: >85% 核心模块
 
 ## 项目健康基线
 
 ```
 tsc --noEmit:  0 errors
-vitest run:    327 passed · 0 failed · 23 files
+vitest run:    342 passed · 0 failed · 23 files
 eslint:         0 errors · 0 warnings
+prettier:       0 violations (src/ bin/ tests/)
 runtime deps:   3 (openai · glob · zod)
 ```

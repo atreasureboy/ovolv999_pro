@@ -12,9 +12,10 @@
     "start": "node dist/bin/ovogogogo.js",
     "dev": "tsx bin/ovogogogo.ts",
     "lint": "eslint src/ bin/ tests/",
-    "lint:fix": "eslint src/ bin/ --fix",
-    "format": "prettier --write src/ bin/",
-    "format:check": "prettier --check src/ bin/",
+    "lint:fix": "eslint src/ bin/ tests/ --fix",
+    "format": "prettier --write src/ bin/ tests/",
+    "format:check": "prettier --check src/ bin/ tests/",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
