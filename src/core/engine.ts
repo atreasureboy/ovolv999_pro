@@ -49,18 +49,18 @@ import { emptyWorkingState, type WorkingState } from './workingState.js'
 import { ThinkingTagFilter } from './thinkingTagFilter.js'
 import { detectExecutionProfile, type ExecutionProfile } from './effort.js'
 import { randomUUID } from 'crypto'
-import { createProviderAdapter, type ProviderAdapter } from './providerAdapter.js'
+import { createProviderAdapter, type ProviderAdapter, type ProviderId } from './providerAdapter.js'
 import { ModelGateway } from './modelGateway.js'
 import { classifyTaskIntent, type TaskIntent } from './taskIntent.js'
 import { evaluateCompletion } from './completionContract.js'
-import type { EngineError, ErrorRecoveryAction, ModuleErrorContext } from './module.js'
+import type { EngineError, ModuleErrorContext } from './module.js'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Normalize a modelCapabilities ProviderId to a providerAdapter ProviderId. */
 function normalizeAdapterProvider(
   provider: string,
-): import('./providerAdapter.js').ProviderId {
+): ProviderId {
   switch (provider) {
     case 'anthropic':
     case 'openai':
@@ -116,13 +116,22 @@ function classifyEngineError(err: unknown): EngineError {
     msg.includes('ETIMEDOUT') ||
     msg.includes('ECONNRESET') ||
     msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNABORTED') ||
+    msg.includes('socket hang up') ||
     msg.includes('network') ||
     msg.includes('fetch failed') ||
     msg.includes('5xx') ||
     msg.includes('503') ||
+    msg.includes('504') ||   // gateway timeout
     msg.includes('502') ||
+    msg.includes('429') ||   // rate limit (should be retryable after backoff)
     msg.includes('overloaded') ||
-    msg.includes('internal_error')
+    msg.includes('internal_error') ||
+    msg.includes('server_error') ||
+    msg.includes('temporarily_unavailable') ||
+    msg.includes('stream interrupted') ||
+    msg.includes('Premature close') ||
+    msg.includes('body stream aborted')
   ) {
     return {
       class: 'recoverable',
@@ -494,6 +503,7 @@ export class ExecutionEngine {
       asyncTaskManager: this.asyncTaskManager,
       execution,
       workingState: this.workingState,
+      modules: this.modules,
       ...modulePatches,
     }
   }
@@ -716,7 +726,7 @@ export class ExecutionEngine {
           let parseError: string | undefined
           try {
             input = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
-          } catch (err) {
+          } catch (err: unknown) {
             input = {}
             parseError = err instanceof Error ? err.message : String(err)
           }
@@ -755,7 +765,7 @@ export class ExecutionEngine {
         this.eventEmitter.emit({ type: 'MAX_ITERATIONS_REACHED', maxIterations: this.config.maxIterations })
         result = { stopped: true, reason: 'max_iterations', output: finalOutput }
       }
-    } catch (err) {
+    } catch (err: unknown) {
       // ── Unified error classification + module notification ──
       const engineErr = classifyEngineError(err)
       const rawMsg = err instanceof Error ? err.message : String(err)
@@ -816,7 +826,7 @@ export class ExecutionEngine {
           messages,
           eventLog: this.eventLog,
         })
-      } catch (err) {
+      } catch (err: unknown) {
         this.eventLog?.append('module_error', module.name, {
           stage: 'onComplete',
           error: err instanceof Error ? err.message : String(err),
@@ -892,34 +902,43 @@ export class ExecutionEngine {
     })
   }
 
-  dispose(): void {
-    // 1. Notify modules (let them flush, close connections etc.)
+  async dispose(): Promise<void> {
+    // 1. Snapshot module state before teardown
     for (const module of this.modules) {
       try {
-        void module.onDispose?.()
+        module.onStateSnapshot?.()
+      } catch {
+        /* best-effort — snapshot failure must not block disposal */
+      }
+    }
+
+    // 2. Notify modules (let them flush, close connections etc.)
+    for (const module of this.modules) {
+      try {
+        await module.onDispose?.()
       } catch {
         /* best-effort — never let one module's cleanup break others */
       }
     }
 
-    // 2. Abort any in-flight turn
+    // 3. Abort any in-flight turn
     if (this.currentTurnAbortController) {
       this.currentTurnAbortController.abort()
     }
 
-    // 3. Terminate background tasks
+    // 4. Terminate background tasks
     this.backgroundTaskManager.dispose()
 
-    // 4. Release all resource locks
+    // 5. Release all resource locks
     this.resourceScheduler.releaseAll()
 
-    // 5. Clear event listeners
+    // 6. Clear event listeners
     this.eventEmitter.clear()
 
-    // 6. Clear shared runtime state
+    // 7. Clear shared runtime state
     this.sharedState.clear()
 
-    // 7. Finish thinking filter (release any buffered state)
+    // 8. Finish thinking filter (release any buffered state)
     this.thinkingFilter.finish()
   }
 }

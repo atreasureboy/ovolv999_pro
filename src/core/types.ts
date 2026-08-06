@@ -10,6 +10,7 @@ import type { ResourceClaim } from './resourceScheduler.js'
 import type { BackgroundTaskManager } from './backgroundTaskManager.js'
 import type { AsyncTaskManager } from './taskManager.js'
 import type { ExecutionContext } from './executionContext.js'
+import type { AgentModule } from './module.js'
 import type { WorkingState } from './workingState.js'
 import type { TaskIntent } from './taskIntent.js'
 import type { ProviderId } from './providerAdapter.js'
@@ -177,6 +178,8 @@ export interface ToolContext {
   asyncTaskManager?: AsyncTaskManager
   execution?: ExecutionContext
   workingState?: WorkingState
+  /** Parent engine modules — allows tools (e.g., AgentTool) to consult module hooks. */
+  modules?: AgentModule[]
 }
 
 /**

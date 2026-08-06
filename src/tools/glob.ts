@@ -7,6 +7,7 @@ import { glob } from 'glob'
 import { stat } from 'fs/promises'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { GLOB_DESCRIPTION } from '../prompts/tools.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 export interface GlobInput {
   pattern: string
@@ -51,7 +52,18 @@ export class GlobTool implements Tool {
       return { content: 'Error: pattern is required', isError: true }
     }
 
-    const cwd = searchPath ?? context.cwd
+    const cwd = (typeof searchPath === 'string' && searchPath) ? searchPath : context.cwd
+
+    // Path security checks
+    if (containsNullByte(cwd)) {
+      return { content: 'Error: path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(cwd)) {
+      return { content: 'Error: path traversal detected in path', isError: true }
+    }
+    if (!isPathWithin(cwd, context.cwd)) {
+      return { content: `Error: path must be within project directory (${context.cwd})`, isError: true }
+    }
 
     try {
       const files = await glob(pattern, {

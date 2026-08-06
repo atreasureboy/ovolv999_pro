@@ -30,7 +30,8 @@ export class TemplateModule implements AgentModule {
   readonly dependencies?: string[] = [] // 如果有依赖 ['memory'] 等
 
   // ── Birth: 注入提示词、工具、上下文 ──
-  async boot(ctx: ModuleBootContext): Promise<ModuleBootResult> {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async boot(_ctx: ModuleBootContext): Promise<ModuleBootResult> {
     return {
       systemPromptSections: ['## My Module\nModule-specific instructions here...'],
       tools: [],                    // 如果模块提供工具，在这里返回
@@ -39,36 +40,36 @@ export class TemplateModule implements AgentModule {
   }
 
   // ── Run: 每个迭代 ──
-  async onIteration(ctx: ModuleIterationContext): Promise<ModuleIterationResult | void> {
+  async onIteration(_ctx: ModuleIterationContext): Promise<ModuleIterationResult | void> {
     // 每轮迭代开始时的逻辑
     // return { injectMessage: '...' } // 如果需要注入消息
   }
 
   // ── Run: 工具调用前介入 ──
-  onBeforeToolCall(toolName: string, input: Record<string, unknown>): ToolCallAdvice | void {
+  onBeforeToolCall(_toolName: string, _input: Record<string, unknown>): ToolCallAdvice | void {
     // 可以 veto 或修改工具调用
     // return { action: 'deny', reason: 'Not allowed for this module' }
   }
 
   // ── Run: 每次工具调用后 ──
-  onToolCall(toolName: string, input: Record<string, unknown>, result: ToolResult, turnNumber: number): void {
+  onToolCall(_toolName: string, _input: Record<string, unknown>, _result: ToolResult, _turnNumber: number): void {
     // 记录、分析、反应
   }
 
   // ── Run: 子 agent 配置修改 ──
-  onDelegation(childConfig: AgentConfig): AgentConfig | void {
+  onDelegation(_childConfig: AgentConfig): AgentConfig | void {
     // 修改子 agent 的配置
     // return { ...childConfig, maxIterations: 50 }
   }
 
   // ── Error: 出错时 ──
-  onError(error: EngineError, ctx: ModuleErrorContext): ErrorRecoveryAction | void {
+  onError(_error: EngineError, _ctx: ModuleErrorContext): ErrorRecoveryAction | void {
     // 返回恢复建议
     return { action: 'continue' }   // continue | skip_turn | abort
   }
 
   // ── Death: 任务完成 ──
-  async onComplete(ctx: ModuleRunContext): Promise<void> {
+  async onComplete(_ctx: ModuleRunContext): Promise<void> {
     // 任务完成后的逻辑
   }
 
@@ -82,7 +83,7 @@ export class TemplateModule implements AgentModule {
     return { /* 你的模块状态 */ }
   }
 
-  onStateRestore(state: Record<string, unknown>): void {
+  onStateRestore(_state: Record<string, unknown>): void {
     // 从快照恢复
   }
 

@@ -64,7 +64,7 @@ export class ToolExecutor {
   }
 
   /** Expose current workingState for re-sync by Engine after tool execution. */
-  get currentWorkingState(): import('../workingState.js').WorkingState | undefined {
+  get currentWorkingState(): WorkingState | undefined {
     return this.deps.workingState
   }
 
@@ -124,8 +124,22 @@ export class ToolExecutor {
 
     let result: ToolResult
     try {
+      // Run module onBeforeToolCall hooks — modules can veto or modify
+      for (const module of this.deps.modules ?? []) {
+        const advice = module.onBeforeToolCall?.(toolName, input)
+        if (advice) {
+          if (advice.action === 'deny') {
+            const result: ToolResult = { content: `Tool "${toolName}" blocked by module: ${advice.reason}`, isError: true }
+            eventEmitter?.emit({ type: 'TOOL_COMPLETED', callId, toolName, result })
+            return result
+          }
+          if (advice.action === 'modify' && advice.modifiedInput) {
+            input = advice.modifiedInput
+          }
+        }
+      }
       result = await tool.execute(input, context)
-    } catch (err) {
+    } catch (err: unknown) {
       result = {
         content: `Tool execution error: ${(err as Error).message}`,
         isError: true,
@@ -169,12 +183,12 @@ export class ToolExecutor {
 
 /** Update WorkingState based on tool type and result */
 function updateWorkingState(
-  state: import('../workingState.js').WorkingState,
+  state: WorkingState,
   toolName: string,
   input: Record<string, unknown>,
   _result: ToolResult,
   verificationDetector?: VerificationDetector,
-): import('../workingState.js').WorkingState {
+): WorkingState {
   const filePath = typeof input.file_path === 'string' ? input.file_path : undefined
   switch (toolName) {
     case 'Read':

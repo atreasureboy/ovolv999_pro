@@ -72,7 +72,7 @@ export class CriticModule implements AgentModule {
 
       if (issues && issues.length > 0) {
         const formatted = issues
-          .map((issue, i) => {
+          .map((issue) => {
             let line = `[问题] ${issue.problem}`
             if (issue.correction) line += `\n[纠正] ${issue.correction}`
             return line
@@ -82,7 +82,7 @@ export class CriticModule implements AgentModule {
           injectMessage: `[🔍 自动纠错检查]\n${formatted}\n\n请根据以上纠错提示立即调整行动。`,
         }
       }
-    } catch (err) {
+    } catch (err: unknown) {
       // critic failures must never break the main loop, but should be traceable
       ctx.eventLog?.append('module_error', this.name, {
         stage: 'onIteration',

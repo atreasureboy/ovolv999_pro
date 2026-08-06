@@ -1,4 +1,4 @@
-import type { OpenAIMessage, Tool, ToolContext, IHookRunner } from '../types.js'
+import type { OpenAIMessage, Tool, ToolContext, IHookRunner, ToolResult } from '../types.js'
 import type { EventLog } from '../eventLog.js'
 import type { Renderer } from '../../ui/renderer.js'
 import type { ContextManager } from '../context/contextManager.js'
@@ -162,10 +162,18 @@ export class ToolScheduler {
       })
     }
 
-    const results = await Promise.all(
-      batch.calls.map(({ tc, input }) =>
-        executor.execute(tc.id, tc.name, input, toolContext, planMode, turnNumber),
-      ),
+    // Per-call try-catch: a single tool crashing mustn't take down the entire batch
+    const results: ToolResult[] = await Promise.all(
+      batch.calls.map(async ({ tc, input }) => {
+        try {
+          return await executor.execute(tc.id, tc.name, input, toolContext, planMode, turnNumber)
+        } catch (err: unknown) {
+          return {
+            content: `Tool execution crashed: ${(err as Error).message}`,
+            isError: true,
+          }
+        }
+      }),
     )
 
     for (let i = 0; i < batch.calls.length; i++) {

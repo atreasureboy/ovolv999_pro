@@ -93,7 +93,7 @@ export class McpClient {
         env: safeEnv(env),
         cwd: cwd ?? process.cwd(),
       })
-    } catch (err) {
+    } catch (err: unknown) {
       throw new Error(
         `Failed to spawn MCP server "${this.serverName}": ${(err as Error).message}`,
         { cause: err },
@@ -208,7 +208,7 @@ export class McpClient {
     if (!this.proc) return
     try {
       this.proc.stdin.write(JSON.stringify(msg) + '\n')
-    } catch (err) {
+    } catch (err: unknown) {
       this.logger.error(`MCP "${this.serverName}" write failed`, { error: (err as Error).message })
     }
   }

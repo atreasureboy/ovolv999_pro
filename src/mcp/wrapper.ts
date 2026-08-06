@@ -75,7 +75,7 @@ export function wrapMcpTool(client: McpClient, descriptor: McpToolDescriptor): T
           content: text || `[${callName} returned no content]`,
           isError: false,
         }
-      } catch (err) {
+      } catch (err: unknown) {
         return {
           content: `[${callName}] invocation failed: ${(err as Error).message}`,
           isError: true,
@@ -116,7 +116,7 @@ export async function loadMcpServers(
       clients.push(client)
       summary.push(`mcp:${name} — ${descriptors.length} tools`)
       logger.info(`MCP server "${name}" contributed ${descriptors.length} tool(s)`)
-    } catch (err) {
+    } catch (err: unknown) {
       logger.warn(`MCP server "${name}" failed to connect, skipping`, {
         error: (err as Error).message,
       })

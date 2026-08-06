@@ -130,7 +130,7 @@ export function loadConversation(sessionDir: string): ConversationSnapshot | nul
     }
 
     return raw as unknown as ConversationSnapshot
-  } catch (err) {
+  } catch (err: unknown) {
     if (err instanceof UnknownSessionVersionError) throw err
     return null
   }

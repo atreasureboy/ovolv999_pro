@@ -289,8 +289,8 @@ function convertTools(tools: ToolDefinition[]): AnthropicToolDef[] {
     description: t.function.description ?? '',
     input_schema: {
       type: 'object' as const,
-      properties: (t.function.parameters?.properties ?? {}) as Record<string, unknown>,
-      required: t.function.parameters?.required as string[] | undefined,
+      properties: t.function.parameters?.properties ?? {},
+      required: t.function.parameters?.required,
     },
   }))
 }
@@ -331,21 +331,6 @@ async function* anthropicSSEToOpenAIChunks(
 
   // Tool use accumulation state
   const toolUseMap = new Map<number, { id: string; name: string; arguments: string }>()
-
-  const emitChunk = (): OpenAI.Chat.ChatCompletionChunk => {
-    const choice: OpenAI.Chat.ChatCompletionChunk.Choice = {
-      index: 0,
-      delta: {},
-      finish_reason: null,
-    }
-    return {
-      id: msgId || `chatcmpl-${chunkIndex++}`,
-      object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [choice],
-    }
-  }
 
   try {
     while (true) {
@@ -518,6 +503,7 @@ export function createProviderAdapter(
         // No API key → fall through to OpenAI-compatible with a warning.
         // Many gateways (OpenRouter, etc.) proxy Anthropic models through
         // an OpenAI-compatible endpoint, so this is a valid configuration.
+        // eslint-disable-next-line no-console
         console.warn(
           '[ProviderAdapter] Anthropic provider selected but no apiKey provided. ' +
           'Falling back to OpenAI-compatible mode. If you are using a proxy/gateway ' +

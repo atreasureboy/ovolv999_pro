@@ -92,7 +92,7 @@ export async function atomicWrite(
     await fh.close()
     fh = null
     await rename(tmpPath, realTarget)
-  } catch (err) {
+  } catch (err: unknown) {
     if (fh) {
       try {
         await fh.close()

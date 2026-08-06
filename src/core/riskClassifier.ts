@@ -18,6 +18,7 @@ export type RiskLevel = 'safe' | 'needs_approval' | 'dangerous'
 const DANGEROUS_PATTERNS: RegExp[] = [
   /\brm\b(?=.*(?:\s-[a-zA-Z]*r[a-zA-Z]*\b|\s--recursive\b))/,
   /\brm\s+.*--no-preserve-root/,
+  /\brm\s+(-rf|-fr)\s+\//,  // rm -rf / (absolute root destruction)
   /\bdd\s+.*of=\/dev\//,
   /\bmkfs\./,
   />\s*\/dev\/(sd|nvme|hd|vd)/,
@@ -26,7 +27,17 @@ const DANGEROUS_PATTERNS: RegExp[] = [
   /:\(\)\s*\{\s*:\|:&\s*\};:/,
   /(?:^|[;&|]+|`|\$\()\s*(sudo|su)\b/,
   /\bchmod\s+(-R\s+)?[0-7]*7[0-7]*\s+\//,
+  /\bchmod\s+(-R\s+)?[0-7]*7[0-7]*\s+\S/,  // chmod 777 on any path (not just root)
   /\bchown\s+-R\s+.*\s+\//,
+  /\bchown\s+\S+:\S+\s+\//,
+  /\bmkswap\b/,
+  /\bmkfs\b/,  // broader mkfs match (mkfs.ext4, mkfs.btrfs, etc.)
+  /\bparted\b/,
+  /\bfdisk\b/,
+  /\bdd\s+if=/,
+  /\b:(){ :|:& };:/,  // fork bomb
+  /\bcrontab\s+-/,
+  /\bhistory\s+-c\b/,
   /\bgit\s+push\s+.*--force.*\b(main|master)\b/,
   /\bgit\s+reset\s+--hard/,
   /\bgit\s+clean\s+(-[a-zA-Z]*[fd])/,

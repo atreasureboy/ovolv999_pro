@@ -129,7 +129,7 @@ function tryParse(path: string): AgentConfigFile {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
-  } catch (err) {
+  } catch (err: unknown) {
     process.stderr.write(
       `[agentConfig] warning: ${path} has invalid JSON (${(err as Error).message}); ignoring this file\n`,
     )

@@ -441,6 +441,18 @@ export class AgentTool implements Tool {
       agentConfig.maxIterations = Math.min(input.max_iterations, 200)
     }
 
+    // Consult parent modules' onDelegation hook — they can modify the child config
+    if (context.modules) {
+      for (const module of context.modules) {
+        try {
+          const modified = module.onDelegation?.(agentConfig)
+          if (modified) Object.assign(agentConfig, modified)
+        } catch {
+          /* best-effort — never let a module's delegation hook block execution */
+        }
+      }
+    }
+
     return runAgentTask(description, prompt, agentConfig, agentLabel, verify, context)
   }
 }

@@ -8,6 +8,7 @@ import { exec } from 'child_process'
 import { promisify } from 'util'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { GREP_DESCRIPTION } from '../prompts/tools.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 const execAsync = promisify(exec)
 
@@ -82,7 +83,18 @@ export class GrepTool implements Tool {
       return { content: 'Error: pattern is required', isError: true }
     }
 
-    const searchDir = searchPath ?? context.cwd
+    const searchDir = (typeof searchPath === 'string' && searchPath) ? searchPath : context.cwd
+
+    // Path security checks
+    if (containsNullByte(searchDir)) {
+      return { content: 'Error: path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(searchDir)) {
+      return { content: 'Error: path traversal detected in path', isError: true }
+    }
+    if (!isPathWithin(searchDir, context.cwd)) {
+      return { content: `Error: path must be within project directory (${context.cwd})`, isError: true }
+    }
 
     // Build rg command (preferred — faster, respects .gitignore)
     const args: string[] = []

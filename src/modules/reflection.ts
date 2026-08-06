@@ -97,7 +97,7 @@ export class ReflectionModule implements AgentModule {
           module: 'reflection',
         })
       }
-    } catch (err) {
+    } catch (err: unknown) {
       // reflection failures must never break anything, but should be traceable
       ctx.eventLog?.append('module_error', this.name, {
         stage: 'onComplete',

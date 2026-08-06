@@ -45,7 +45,8 @@ export class MyTool implements Tool {
   }
 
   // ── 执行逻辑 ──
-  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+  // eslint-disable-next-line @typescript-eslint/require-await
+  async execute(_input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
     // 你的逻辑在这里
     return { content: 'done', isError: false }
   }

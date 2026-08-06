@@ -77,7 +77,7 @@ function tryParse(path: string): OvogoSettings {
   }
   try {
     return JSON.parse(raw) as OvogoSettings
-  } catch (err) {
+  } catch (err: unknown) {
     process.stderr.write(
       `[settings] warning: ${path} has invalid JSON (${(err as Error).message}); ignoring this file\n`,
     )
