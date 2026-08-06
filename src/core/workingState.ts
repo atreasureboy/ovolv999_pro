@@ -71,7 +71,11 @@ export function addFact(state: WorkingState, fact: Fact): WorkingState {
       ...state,
       confirmedFacts: state.confirmedFacts.map((f) =>
         f.claim === fact.claim
-          ? { ...f, source: fact.source ?? f.source, confirmedAt: fact.confirmedAt ?? f.confirmedAt }
+          ? {
+              ...f,
+              source: fact.source ?? f.source,
+              confirmedAt: fact.confirmedAt ?? f.confirmedAt,
+            }
           : f,
       ),
     }

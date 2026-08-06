@@ -76,7 +76,9 @@ describe('classifyCommandRisk', () => {
   // ── Needs approval ─────────────────────────────────────────────────
 
   it('classifies unknown commands as needs_approval', () => {
-    expect(classifyCommandRisk('some-unknown-command arg1 arg2')).toBe('needs_approval' satisfies RiskLevel)
+    expect(classifyCommandRisk('some-unknown-command arg1 arg2')).toBe(
+      'needs_approval' satisfies RiskLevel,
+    )
   })
 
   it('classifies commands with command substitution as needs_approval', () => {

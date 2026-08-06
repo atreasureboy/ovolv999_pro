@@ -10,7 +10,15 @@
  */
 
 import type OpenAI from 'openai'
-import type { AgentModule, ModuleBootResult, ModuleRunContext, ModuleDescription, ErrorRecoveryAction, EngineError, ModuleErrorContext } from '../core/module.js'
+import type {
+  AgentModule,
+  ModuleBootResult,
+  ModuleRunContext,
+  ModuleDescription,
+  ErrorRecoveryAction,
+  EngineError,
+  ModuleErrorContext,
+} from '../core/module.js'
 import type { SemanticMemory } from '../core/semanticMemory.js'
 import type { EpisodicMemory } from '../core/episodicMemory.js'
 

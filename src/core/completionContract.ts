@@ -126,7 +126,9 @@ export function evaluateCompletion(input: CompletionInput): CompletionVerdict {
   // 硬阻塞
   const blockers: string[] = []
   if (input.activeWorkers.some((w) => w.status === 'running' || w.status === 'pending')) {
-    blockers.push(`${input.activeWorkers.filter((w) => w.status === 'running' || w.status === 'pending').length} worker(s) still running`)
+    blockers.push(
+      `${input.activeWorkers.filter((w) => w.status === 'running' || w.status === 'pending').length} worker(s) still running`,
+    )
   }
   if (input.unresolvedBlockers.length > 0) {
     blockers.push(...input.unresolvedBlockers)

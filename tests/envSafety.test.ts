@@ -35,33 +35,46 @@ describe('safeEnv', () => {
     expect(env.PATH).toBe('/usr/bin')
   })
 
-  it('filters AWS_* keys', () => {
+  it('filters known AWS credential keys but not non-secret AWS vars', () => {
     process.env.AWS_ACCESS_KEY_ID = 'AKIAxxx'
     process.env.AWS_SECRET_ACCESS_KEY = 'secret'
     process.env.AWS_REGION = 'us-east-1'
+    process.env.AWS_DEFAULT_REGION = 'us-west-2'
     process.env.PATH = '/usr/bin'
 
     const env = safeEnv()
     expect(env.AWS_ACCESS_KEY_ID).toBeUndefined()
     expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
-    expect(env.AWS_REGION).toBeUndefined()
+    // AWS_REGION / AWS_DEFAULT_REGION are NOT secrets — should pass through
+    expect(env.AWS_REGION).toBe('us-east-1')
+    expect(env.AWS_DEFAULT_REGION).toBe('us-west-2')
     expect(env.PATH).toBe('/usr/bin')
   })
 
-  it('filters SECRET/TOKEN/PASSWORD/CREDENTIAL keys', () => {
-    // Keys must START with these patterns to be filtered
-    process.env.SECRET_KEY = 'sk123'
-    process.env.TOKEN_VALUE = 'tok123'
-    process.env.PASSWORD_FIELD = 'pw123'
-    process.env.CREDENTIAL_STORE = 'cred123'
+  it('filters vars ending with _TOKEN / _KEY / _SECRET / _PASSWORD / _CREDENTIALS', () => {
+    // Suffix-based matching — catches PROVIDER_API_KEY, SERVICE_TOKEN, etc.
+    process.env.API_TOKEN = 'tok123'
+    process.env.DB_PASSWORD = 'pw123'
+    process.env.OAUTH_SECRET = 'sec123'
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = '/path/to/creds.json'
+    process.env.AZURE_CLIENT_SECRET = 'az-secret'
+    process.env.AZURE_API_KEY = 'az-key'
     process.env.PATH = '/usr/bin'
+    // Non-secret vars that happen to be "wordy" should NOT be caught
+    process.env.TOKEN_EXPIRY_SECONDS = '3600'
+    process.env.KEY_VAULT_URL = 'https://vault.example.com'
 
     const env = safeEnv()
-    expect(env.SECRET_KEY).toBeUndefined()
-    expect(env.TOKEN_VALUE).toBeUndefined()
-    expect(env.PASSWORD_FIELD).toBeUndefined()
-    expect(env.CREDENTIAL_STORE).toBeUndefined()
+    expect(env.API_TOKEN).toBeUndefined()
+    expect(env.DB_PASSWORD).toBeUndefined()
+    expect(env.OAUTH_SECRET).toBeUndefined()
+    expect(env.GOOGLE_APPLICATION_CREDENTIALS).toBeUndefined()
+    expect(env.AZURE_CLIENT_SECRET).toBeUndefined()
+    expect(env.AZURE_API_KEY).toBeUndefined()
     expect(env.PATH).toBe('/usr/bin')
+    // Non-sensitive vars pass through
+    expect(env.TOKEN_EXPIRY_SECONDS).toBe('3600')
+    expect(env.KEY_VAULT_URL).toBe('https://vault.example.com')
   })
 
   it('case-insensitive filtering', () => {

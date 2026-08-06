@@ -27,7 +27,7 @@ interface SkillEntry {
 export function createLoadSkillTool(skills: Map<string, SkillEntry>): Tool {
   return {
     name: 'load_skill',
-    description: 'Load a skill\'s full prompt by name',
+    description: "Load a skill's full prompt by name",
     category: 'system' as const,
     riskLevel: 'safe' as const,
     concurrencySafe: true,

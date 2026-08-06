@@ -5,7 +5,12 @@ export type RunEvent =
   | { type: 'BOOT_COMPLETED'; moduleCount: number; toolCount: number }
   | { type: 'ITERATION_STARTED'; iteration: number }
   | { type: 'MODEL_REQUESTED'; model: string }
-  | { type: 'MODEL_COMPLETED'; assistantText: string; finishReason: string | null; toolCallCount: number }
+  | {
+      type: 'MODEL_COMPLETED'
+      assistantText: string
+      finishReason: string | null
+      toolCallCount: number
+    }
   | { type: 'MODEL_FAILED'; error: string }
   | { type: 'TOOL_BATCH_STARTED'; count: number; parallel: boolean }
   | { type: 'TOOL_STARTED'; callId: string; toolName: string; input: Record<string, unknown> }
@@ -49,7 +54,9 @@ export class RunEventEmitter {
   ): void {
     const list = this.handlers[type]
     if (!list) return
-    const idx = (list as Array<(event: unknown) => void>).indexOf(handler as (event: unknown) => void)
+    const idx = (list as Array<(event: unknown) => void>).indexOf(
+      handler as (event: unknown) => void,
+    )
     if (idx >= 0) list.splice(idx, 1)
   }
 

@@ -42,27 +42,22 @@ export function transitionQueryState(state: QueryState, event: QueryEvent): Quer
         return { kind: 'complete', reason: 'interrupted', output: event.output }
       if (event.type === 'max_iterations')
         return { kind: 'complete', reason: 'max_iterations', output: event.output }
-      if (event.type === 'error')
-        return { kind: 'complete', reason: 'error', output: event.output }
-      if (event.type === 'continue')
-        return { kind: 'budget_check', iteration: state.iteration }
+      if (event.type === 'error') return { kind: 'complete', reason: 'error', output: event.output }
+      if (event.type === 'continue') return { kind: 'budget_check', iteration: state.iteration }
       return state
     }
 
     case 'budget_check':
-      if (event.type === 'continue')
-        return { kind: 'llm_call', iteration: state.iteration }
+      if (event.type === 'continue') return { kind: 'llm_call', iteration: state.iteration }
       return state
 
     case 'llm_call': {
       if (event.type === 'hard_abort')
         return { kind: 'complete', reason: 'interrupted', output: event.output }
-      if (event.type === 'error')
-        return { kind: 'complete', reason: 'error', output: event.output }
+      if (event.type === 'error') return { kind: 'complete', reason: 'error', output: event.output }
       if (event.type === 'llm_done') {
         const stopped = event.finishReason === 'stop' || !event.hasToolCalls
-        if (stopped)
-          return { kind: 'complete', reason: 'stop_sequence', output: event.output }
+        if (stopped) return { kind: 'complete', reason: 'stop_sequence', output: event.output }
         return { kind: 'tool_execution', iteration: state.iteration }
       }
       return state

@@ -19,9 +19,10 @@ const DEFAULT_TIMEOUT_MS = 1_800_000
 const MAX_TIMEOUT_MS = 14_400_000
 const MIN_TIMEOUT_MS = 1_000
 
-const SHELL = process.platform === 'win32'
-  ? (process.env.OVOGO_SHELL || process.env.ComSpec || 'cmd.exe')
-  : (process.env.OVOGO_SHELL || 'bash')
+const SHELL =
+  process.platform === 'win32'
+    ? process.env.OVOGO_SHELL || process.env.ComSpec || 'cmd.exe'
+    : process.env.OVOGO_SHELL || 'bash'
 
 export interface BashInput {
   command: string

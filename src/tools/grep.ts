@@ -83,7 +83,7 @@ export class GrepTool implements Tool {
       return { content: 'Error: pattern is required', isError: true }
     }
 
-    const searchDir = (typeof searchPath === 'string' && searchPath) ? searchPath : context.cwd
+    const searchDir = typeof searchPath === 'string' && searchPath ? searchPath : context.cwd
 
     // Path security checks
     if (containsNullByte(searchDir)) {
@@ -93,7 +93,10 @@ export class GrepTool implements Tool {
       return { content: 'Error: path traversal detected in path', isError: true }
     }
     if (!isPathWithin(searchDir, context.cwd)) {
-      return { content: `Error: path must be within project directory (${context.cwd})`, isError: true }
+      return {
+        content: `Error: path must be within project directory (${context.cwd})`,
+        isError: true,
+      }
     }
 
     // Build rg command (preferred — faster, respects .gitignore)

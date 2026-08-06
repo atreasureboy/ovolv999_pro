@@ -46,14 +46,18 @@ describe('loadAgentConfig', () => {
   it('reads a project-level .ovogo/agent.json', () => {
     const cfgDir = join(workDir, '.ovogo')
     mkdirSync(cfgDir, { recursive: true })
-    writeFileSync(join(cfgDir, 'agent.json'), JSON.stringify({
-      model: 'claude-sonnet-4-x',
-      modules: ['memory'],
-      permission: { mode: 'ask', rules: [{ tool: 'Bash', action: 'deny' }] },
-      mcpServers: { time: { command: 'node' } },
-      verifyCommands: ['npm test'],
-      pricing: { inputPer1M: 3 },
-    }), 'utf8')
+    writeFileSync(
+      join(cfgDir, 'agent.json'),
+      JSON.stringify({
+        model: 'claude-sonnet-4-x',
+        modules: ['memory'],
+        permission: { mode: 'ask', rules: [{ tool: 'Bash', action: 'deny' }] },
+        mcpServers: { time: { command: 'node' } },
+        verifyCommands: ['npm test'],
+        pricing: { inputPer1M: 3 },
+      }),
+      'utf8',
+    )
 
     const cfg = loadAgentConfig(workDir)
     expect(cfg.model).toBe('claude-sonnet-4-x')
@@ -75,7 +79,7 @@ describe('loadAgentConfig', () => {
     expect(cfg.modules).toBeUndefined()
     expect(cfg.mcpServers).toEqual({})
     // A malformed file must not be silently ignored — surface why it was dropped.
-    const warned = writeSpy.mock.calls.some(c => String(c[0]).includes('invalid JSON'))
+    const warned = writeSpy.mock.calls.some((c) => String(c[0]).includes('invalid JSON'))
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })
@@ -93,9 +97,7 @@ describe('loadAgentConfig', () => {
     // The whole file is rejected — no partially-applied garbage.
     expect(cfg.model).toBeUndefined()
     expect(cfg.permission).toBeUndefined()
-    const warned = writeSpy.mock.calls.some(c =>
-      String(c[0]).includes('invalid config'),
-    )
+    const warned = writeSpy.mock.calls.some((c) => String(c[0]).includes('invalid config'))
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })
@@ -104,14 +106,10 @@ describe('loadAgentConfig', () => {
     const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     const cfgDir = join(workDir, '.ovogo')
     mkdirSync(cfgDir, { recursive: true })
-    writeFileSync(
-      join(cfgDir, 'agent.json'),
-      JSON.stringify({ maxIterations: 'a lot' }),
-      'utf8',
-    )
+    writeFileSync(join(cfgDir, 'agent.json'), JSON.stringify({ maxIterations: 'a lot' }), 'utf8')
     const cfg = loadAgentConfig(workDir)
     expect(cfg.maxIterations).toBeUndefined()
-    const warned = writeSpy.mock.calls.some(c => String(c[0]).includes('invalid config'))
+    const warned = writeSpy.mock.calls.some((c) => String(c[0]).includes('invalid config'))
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })
@@ -127,9 +125,7 @@ describe('loadAgentConfig', () => {
     )
     const cfg = loadAgentConfig(workDir)
     expect(cfg.model).toBe('gpt-4o') // valid field still applied
-    const warned = writeSpy.mock.calls.some(c =>
-      String(c[0]).includes('unknown key'),
-    )
+    const warned = writeSpy.mock.calls.some((c) => String(c[0]).includes('unknown key'))
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })
@@ -145,7 +141,7 @@ describe('loadAgentConfig', () => {
     )
     const cfg = loadAgentConfig(workDir)
     expect(cfg.permission).toBeUndefined()
-    const warned = writeSpy.mock.calls.some(c => String(c[0]).includes('invalid config'))
+    const warned = writeSpy.mock.calls.some((c) => String(c[0]).includes('invalid config'))
     expect(warned).toBe(true)
     writeSpy.mockRestore()
   })

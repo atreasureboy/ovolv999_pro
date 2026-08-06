@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { ModelGateway, ModelGatewayError } from '../src/core/modelGateway.js'
-import type { ProviderAdapter, ProviderId } from '../src/core/providerAdapter.js'
+import type { ProviderAdapter } from '../src/core/providerAdapter.js'
 import type { TokenUsage } from '../src/core/costTracker.js'
 import { detectProvider } from '../src/core/modelCapabilities.js'
 
@@ -13,18 +13,17 @@ import { detectProvider } from '../src/core/modelCapabilities.js'
 
 function makeAdapter(overrides: Partial<ProviderAdapter> = {}): ProviderAdapter {
   return {
-    providerId: 'openai' as ProviderId,
+    providerId: 'openai',
     streamUsageSupported: true,
     resetStreamUsageLatch() {},
     markStreamUsageUnsupported() {},
-    stream: async () => (async function* () {})(),
+    stream: () => Promise.resolve((async function* () {})()),
     ...overrides,
-  } as ProviderAdapter
+  }
 }
 
 // ── Minimal renderer stub ────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makeRenderer(): any {
   return {
     startSpinner() {},
@@ -133,7 +132,14 @@ describe('ModelGateway', () => {
 
   it('ModelGatewayError stores attempts', () => {
     const err = new ModelGatewayError('test error', [
-      { model: 'gpt-4', provider: 'openai', success: false, error: 'timeout', latencyMs: 1000, usage: null },
+      {
+        model: 'gpt-4',
+        provider: 'openai',
+        success: false,
+        error: 'timeout',
+        latencyMs: 1000,
+        usage: null,
+      },
     ])
     expect(err.name).toBe('ModelGatewayError')
     expect(err.message).toBe('test error')

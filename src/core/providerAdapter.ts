@@ -59,15 +59,14 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     this._streamUsageSupported = false
   }
 
-  async stream(req: ProviderStreamRequest): Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>> {
+  async stream(
+    req: ProviderStreamRequest,
+  ): Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>> {
     const { model, systemPrompt, messages, tools, temperature, maxOutputTokens, signal } = req
 
     const baseBody = {
       model,
-      messages: [
-        { role: 'system' as const, content: systemPrompt },
-        ...messages,
-      ],
+      messages: [{ role: 'system' as const, content: systemPrompt }, ...messages],
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? ('auto' as const) : undefined,
       temperature: temperature ?? 0,
@@ -180,7 +179,9 @@ export class AnthropicAdapter implements ProviderAdapter {
     this._streamUsageSupported = false
   }
 
-  async stream(req: ProviderStreamRequest): Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>> {
+  async stream(
+    req: ProviderStreamRequest,
+  ): Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>> {
     const { model, systemPrompt, messages, tools, temperature, maxOutputTokens, signal } = req
 
     const anthropicMessages = convertMessages(messages)
@@ -223,9 +224,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
 // ── Message conversion helpers ──────────────────────────────────────
 
-function convertMessages(
-  messages: OpenAI.Chat.ChatCompletionMessageParam[],
-): AnthropicMessage[] {
+function convertMessages(messages: OpenAI.Chat.ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = []
 
   for (const msg of messages) {
@@ -238,7 +237,9 @@ function convertMessages(
     }
 
     if (msg.role === 'assistant') {
-      const toolCalls = (msg as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }).tool_calls
+      const toolCalls = (
+        msg as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }
+      ).tool_calls
       if (toolCalls && toolCalls.length > 0) {
         const blocks: AnthropicContentBlock[] = []
         // Text content first
@@ -249,7 +250,9 @@ function convertMessages(
           let parsedArgs: Record<string, unknown> = {}
           try {
             parsedArgs = JSON.parse(tc.function.arguments) as Record<string, unknown>
-          } catch { /* keep empty */ }
+          } catch {
+            /* keep empty */
+          }
           blocks.push({
             type: 'tool_use',
             id: tc.id,
@@ -385,11 +388,13 @@ async function* anthropicSSEToOpenAIChunks(
                 object: 'chat.completion.chunk',
                 created: Math.floor(Date.now() / 1000),
                 model,
-                choices: [{
-                  index: 0,
-                  delta: { content: event.delta.text },
-                  finish_reason: null,
-                }],
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: event.delta.text },
+                    finish_reason: null,
+                  },
+                ],
               }
               if (inputTokens > 0 || outputTokens > 0) {
                 chunk.usage = {
@@ -399,7 +404,11 @@ async function* anthropicSSEToOpenAIChunks(
                 }
               }
               yield chunk
-            } else if (event.delta?.type === 'input_json_delta' && event.delta.partial_json !== undefined && event.index !== undefined) {
+            } else if (
+              event.delta?.type === 'input_json_delta' &&
+              event.delta.partial_json !== undefined &&
+              event.index !== undefined
+            ) {
               // Tool use argument delta
               const existing = toolUseMap.get(event.index)
               if (existing) {
@@ -419,18 +428,22 @@ async function* anthropicSSEToOpenAIChunks(
                   object: 'chat.completion.chunk',
                   created: Math.floor(Date.now() / 1000),
                   model,
-                  choices: [{
-                    index: 0,
-                    delta: {
-                      tool_calls: [{
-                        index: event.index,
-                        id: tc.id,
-                        type: 'function' as const,
-                        function: { name: tc.name, arguments: tc.arguments },
-                      }],
+                  choices: [
+                    {
+                      index: 0,
+                      delta: {
+                        tool_calls: [
+                          {
+                            index: event.index,
+                            id: tc.id,
+                            type: 'function' as const,
+                            function: { name: tc.name, arguments: tc.arguments },
+                          },
+                        ],
+                      },
+                      finish_reason: null,
                     },
-                    finish_reason: null,
-                  }],
+                  ],
                 }
                 yield chunk
               }
@@ -457,11 +470,13 @@ async function* anthropicSSEToOpenAIChunks(
               object: 'chat.completion.chunk',
               created: Math.floor(Date.now() / 1000),
               model,
-              choices: [{
-                index: 0,
-                delta: {},
-                finish_reason: mappedFinishReason,
-              }],
+              choices: [
+                {
+                  index: 0,
+                  delta: {},
+                  finish_reason: mappedFinishReason,
+                },
+              ],
               usage: {
                 prompt_tokens: inputTokens,
                 completion_tokens: outputTokens,
@@ -506,8 +521,8 @@ export function createProviderAdapter(
         // eslint-disable-next-line no-console
         console.warn(
           '[ProviderAdapter] Anthropic provider selected but no apiKey provided. ' +
-          'Falling back to OpenAI-compatible mode. If you are using a proxy/gateway ' +
-          '(e.g. OpenRouter), this is expected.',
+            'Falling back to OpenAI-compatible mode. If you are using a proxy/gateway ' +
+            '(e.g. OpenRouter), this is expected.',
         )
         return new OpenAICompatibleAdapter(client, 'anthropic')
       }

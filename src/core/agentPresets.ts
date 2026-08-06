@@ -49,6 +49,8 @@ export interface AgentConfig {
   disallowedTools?: string[]
   /** Skill IDs (future — for lazy-loaded skill system) */
   skills?: string[]
+  /** Maximum wall-clock time for this agent in milliseconds (0 = no limit) */
+  timeoutMs?: number
   /** Execution limits */
   maxIterations?: number
   maxOutputTokens?: number
@@ -225,6 +227,10 @@ export function validateAgentConfig(raw: unknown): AgentConfig | null {
       : undefined,
     maxIterations:
       typeof obj.maxIterations === 'number' ? Math.min(obj.maxIterations, 200) : undefined,
+    timeoutMs:
+      typeof obj.timeoutMs === 'number' && obj.timeoutMs > 0
+        ? Math.min(obj.timeoutMs, 3_600_000)
+        : undefined,
     temperature: typeof obj.temperature === 'number' ? obj.temperature : undefined,
     maxOutputTokens: typeof obj.maxOutputTokens === 'number' ? obj.maxOutputTokens : undefined,
   }

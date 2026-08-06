@@ -62,7 +62,10 @@ export class FileWriteTool implements Tool {
       return { content: 'Error: path traversal detected in file_path', isError: true }
     }
     if (!isPathWithin(file_path, context.cwd)) {
-      return { content: `Error: file_path must be within the project directory (${context.cwd})`, isError: true }
+      return {
+        content: `Error: file_path must be within the project directory (${context.cwd})`,
+        isError: true,
+      }
     }
 
     try {

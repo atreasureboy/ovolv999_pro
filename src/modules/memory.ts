@@ -9,7 +9,12 @@
  */
 
 import type { Tool, ToolDefinition, ToolResult } from '../core/types.js'
-import type { AgentModule, ModuleBootContext, ModuleBootResult, ModuleDescription } from '../core/module.js'
+import type {
+  AgentModule,
+  ModuleBootContext,
+  ModuleBootResult,
+  ModuleDescription,
+} from '../core/module.js'
 import type { SemanticMemory } from '../core/semanticMemory.js'
 import type { EpisodicMemory } from '../core/episodicMemory.js'
 import { getMemoryDir, buildMemorySystemSection } from '../memory/index.js'
@@ -82,7 +87,9 @@ Higher-priority sources override lower ones on conflict.`,
       const confidence =
         typeof input.confidence === 'number' ? Math.min(Math.max(input.confidence, 0), 1) : 0.7
       const source = str(input.source, 'agent_inferred') as
-        'user_stated' | 'agent_inferred' | 'tool_observed'
+        | 'user_stated'
+        | 'agent_inferred'
+        | 'tool_observed'
 
       const entry = await semantic.write({
         content: content.slice(0, 500),

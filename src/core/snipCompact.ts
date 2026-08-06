@@ -37,11 +37,7 @@ function headTailTruncate(text: string, maxChars: number, head: number, tail: nu
   const saved = text.length - (head + tail)
   if (saved < SNIP_MIN_SAVINGS_CHARS) return text
   const omitted = text.length - head - tail
-  return (
-    text.slice(0, head) +
-    `\n\n[…snip: ${omitted} chars omitted…]\n\n` +
-    text.slice(-tail)
-  )
+  return text.slice(0, head) + `\n\n[…snip: ${omitted} chars omitted…]\n\n` + text.slice(-tail)
 }
 
 function snipToolResults(
@@ -76,10 +72,7 @@ function snipToolResults(
   return { trimmed, charsSaved }
 }
 
-function dropEmptyMessages(
-  messages: OpenAIMessage[],
-  protectedRange: number,
-): number {
+function dropEmptyMessages(messages: OpenAIMessage[], protectedRange: number): number {
   const original = messages.length
   for (let i = messages.length - 1 - protectedRange; i >= 0; i--) {
     const msg = messages[i]
@@ -91,10 +84,7 @@ function dropEmptyMessages(
   return original - messages.length
 }
 
-function collapseDuplicateUsers(
-  messages: OpenAIMessage[],
-  protectedRange: number,
-): number {
+function collapseDuplicateUsers(messages: OpenAIMessage[], protectedRange: number): number {
   let dropped = 0
   for (let i = messages.length - 2 - protectedRange; i >= 0; i--) {
     const cur = messages[i]
@@ -108,10 +98,7 @@ function collapseDuplicateUsers(
   return dropped
 }
 
-function stripOldThinking(
-  messages: OpenAIMessage[],
-  protectedRange: number,
-): number {
+function stripOldThinking(messages: OpenAIMessage[], protectedRange: number): number {
   let stripped = 0
 
   for (let i = 0; i < messages.length - protectedRange; i++) {

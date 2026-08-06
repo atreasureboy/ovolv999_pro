@@ -71,6 +71,8 @@ function makeEngine(
     permissionChecker?: PermissionChecker
     maxIterations?: number
     maxContextTokens?: number
+    pricing?: { inputPer1M?: number; outputPer1M?: number }
+    maxCostUsd?: number
   } = {},
 ): { engine: ExecutionEngine; eventLog: EventLog } {
   const eventLog = new EventLog(workDir)
@@ -87,6 +89,8 @@ function makeEngine(
     client: createMockClient(scripts),
     permissionChecker: opts.permissionChecker,
     maxContextTokens: opts.maxContextTokens,
+    pricing: opts.pricing,
+    maxCostUsd: opts.maxCostUsd,
   }
   const engine = new ExecutionEngine(config, new Renderer())
   return { engine, eventLog }
@@ -103,7 +107,7 @@ describe('ExecutionEngine runTurn — error path', () => {
   it('writes an "error" event to the EventLog with the message', async () => {
     const { engine, eventLog } = makeEngine([errorResponse(new Error('boom'))])
     await engine.runTurn('go', [])
-    const errors = eventLog.readAll().filter(e => e.type === 'error')
+    const errors = eventLog.readAll().filter((e) => e.type === 'error')
     expect(errors).toHaveLength(1)
     expect(String(errors[0].detail.error)).toContain('boom')
   })
@@ -124,10 +128,13 @@ describe('ExecutionEngine runTurn — token usage', () => {
 
   it('accumulates usage across multiple LLM calls in one turn', async () => {
     const rec = makeRecordingTool()
-    const { engine } = makeEngine([
-      toolCallResponse([{ name: 'Recorder', arguments: { input: 'a' } }]),
-      textResponse('done', { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 }),
-    ], { extraTools: [rec.tool] })
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Recorder', arguments: { input: 'a' } }]),
+        textResponse('done', { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 }),
+      ],
+      { extraTools: [rec.tool] },
+    )
     await engine.runTurn('run it', [])
     expect(engine.getTokenUsage().totalTokens).toBe(60) // usage absent on the tool-call leg
   })
@@ -136,16 +143,70 @@ describe('ExecutionEngine runTurn — token usage', () => {
 describe('ExecutionEngine runTurn — tool loop', () => {
   it('executes a requested tool then stops on a text reply', async () => {
     const rec = makeRecordingTool()
-    const { engine } = makeEngine([
-      toolCallResponse([{ name: 'Recorder', arguments: { input: 'hello' } }]),
-      textResponse('all done'),
-    ], { extraTools: [rec.tool] })
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Recorder', arguments: { input: 'hello' } }]),
+        textResponse('all done'),
+      ],
+      { extraTools: [rec.tool] },
+    )
     const { result, newHistory } = await engine.runTurn('use the tool', [])
     expect(rec.calls).toEqual([{ input: 'hello' }])
     expect(result.reason).toBe('stop_sequence')
     // history: user, assistant(tool_call), tool(result), assistant(text)
-    const roles = newHistory.map(m => m.role)
+    const roles = newHistory.map((m) => m.role)
     expect(roles).toContain('tool')
+  })
+})
+
+describe('ExecutionEngine runTurn — cost budget', () => {
+  it('stops with budget_exceeded before the next LLM call once cost >= maxCostUsd', async () => {
+    const rec = makeRecordingTool()
+    // Pricing $1000/1M tokens → the first (1000-token) call costs $1.00.
+    // maxCostUsd 0.50 → the check before the 2nd call trips.
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Recorder', arguments: { input: 'x' } }], {
+          prompt_tokens: 1000,
+          completion_tokens: 0,
+          total_tokens: 1000,
+        }),
+        textResponse('should never be consumed'),
+      ],
+      {
+        extraTools: [rec.tool],
+        pricing: { inputPer1M: 1000, outputPer1M: 1000 },
+        maxCostUsd: 0.5,
+      },
+    )
+    const { result } = await engine.runTurn('run it', [])
+    expect(result.reason).toBe('budget_exceeded')
+    expect(rec.calls).toHaveLength(1) // first iteration ran before the budget tripped
+    expect(engine.getTokenUsage().costUsd).toBeGreaterThanOrEqual(0.5)
+  })
+
+  it('runs normally when maxCostUsd is not configured', async () => {
+    const { engine } = makeEngine([textResponse('hi')], {
+      pricing: { inputPer1M: 1000, outputPer1M: 1000 },
+    })
+    const { result } = await engine.runTurn('go', [])
+    expect(result.reason).toBe('stop_sequence')
+  })
+})
+
+describe('ExecutionEngine runTurn — max iterations exit', () => {
+  it('reports max_iterations with the accumulated output (sentinel path)', async () => {
+    // Every call emits a tool call → loop never decides → maxIterations exhausts.
+    const rec = makeRecordingTool()
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Recorder', arguments: { input: '1' } }]),
+        toolCallResponse([{ name: 'Recorder', arguments: { input: '2' } }]),
+      ],
+      { extraTools: [rec.tool], maxIterations: 2 },
+    )
+    const { result } = await engine.runTurn('loop', [])
+    expect(result.reason).toBe('max_iterations')
   })
 })
 
@@ -153,13 +214,13 @@ describe('ExecutionEngine runTurn — permission gate', () => {
   it('blocks a denied tool and feeds back an error tool_result without executing', async () => {
     const rec = makeRecordingTool()
     const deny = new PermissionChecker('auto', [{ tool: 'Recorder', action: 'deny' }])
-    const { engine } = makeEngine([
-      toolCallResponse([{ name: 'Recorder', arguments: { input: 'x' } }]),
-      textResponse('okay'),
-    ], { extraTools: [rec.tool], permissionChecker: deny })
+    const { engine } = makeEngine(
+      [toolCallResponse([{ name: 'Recorder', arguments: { input: 'x' } }]), textResponse('okay')],
+      { extraTools: [rec.tool], permissionChecker: deny },
+    )
     const { newHistory } = await engine.runTurn('try the tool', [])
     expect(rec.calls).toHaveLength(0) // never executed
-    const toolMsg = newHistory.find(m => m.role === 'tool')
+    const toolMsg = newHistory.find((m) => m.role === 'tool')
     expect(toolMsg).toBeDefined()
     expect(String(toolMsg!.content)).toContain('Permission denied')
   })
@@ -192,7 +253,7 @@ describe('ExecutionEngine runTurn — permission gate', () => {
     )
     const { newHistory } = await engine.runTurn('use it', [])
     expect(rec.calls).toHaveLength(0) // approver said no → never ran
-    const toolMsg = newHistory.find(m => m.role === 'tool')
+    const toolMsg = newHistory.find((m) => m.role === 'tool')
     expect(String(toolMsg!.content)).toContain('denied by user')
   })
 })
@@ -210,7 +271,7 @@ describe('ExecutionEngine runTurn — bad-args self-heal', () => {
     })
     const { newHistory } = await engine.runTurn('call it badly', [])
     expect(rec.calls).toHaveLength(0) // never executed with garbage
-    const toolMsg = newHistory.find(m => m.role === 'tool')
+    const toolMsg = newHistory.find((m) => m.role === 'tool')
     expect(toolMsg).toBeDefined()
     expect(String(toolMsg!.content).toLowerCase()).toMatch(/error|invalid|parse/)
   })
@@ -238,7 +299,7 @@ describe('ExecutionEngine runTurn — concurrency actually executes in parallel'
       execute(): Promise<{ content: string; isError: boolean }> {
         tracker.active++
         if (tracker.active > tracker.max) tracker.max = tracker.active
-        return new Promise(resolve =>
+        return new Promise((resolve) =>
           setTimeout(() => {
             tracker.active--
             resolve({ content: `ok:${name}`, isError: false })
@@ -292,15 +353,23 @@ describe('ExecutionEngine runTurn — context compaction', () => {
     // (aggressive strategy keeps 4 recent; needs >= 8 total to proceed).
     const longHistory: { role: 'user' | 'assistant'; content: string }[] = []
     for (let i = 0; i < 10; i++) {
-      longHistory.push({ role: 'user', content: `earlier task number ${i} with plenty of detail `.repeat(4) })
-      longHistory.push({ role: 'assistant', content: `acknowledged task ${i} and did substantial work on it`.repeat(4) })
+      longHistory.push({
+        role: 'user',
+        content: `earlier task number ${i} with plenty of detail `.repeat(4),
+      })
+      longHistory.push({
+        role: 'assistant',
+        content: `acknowledged task ${i} and did substantial work on it`.repeat(4),
+      })
     }
     const preCount = longHistory.length + 1 // +1 for the new user message
 
     // scripts[0] = compaction summarization (non-streaming); scripts[1] = final reply (streaming)
     const { engine, eventLog } = makeEngine(
       [
-        textResponse('<summary>The user worked through ten earlier tasks; all completed.</summary>'),
+        textResponse(
+          '<summary>The user worked through ten earlier tasks; all completed.</summary>',
+        ),
         textResponse('all done'),
       ],
       { maxContextTokens: 100 }, // tiny window → pressure forces aggressive compaction
@@ -308,12 +377,12 @@ describe('ExecutionEngine runTurn — context compaction', () => {
     const { result, newHistory } = await engine.runTurn('next step', longHistory)
 
     // A compaction event was recorded with the strategy + token reduction.
-    const compactions = eventLog.readAll().filter(e => e.type === 'context_compact')
+    const compactions = eventLog.readAll().filter((e) => e.type === 'context_compact')
     expect(compactions.length).toBeGreaterThan(0)
 
     // The compacted history carries the summary marker and is smaller than before.
     const hasSummary = newHistory.some(
-      m => typeof m.content === 'string' && m.content.includes('CONVERSATION SUMMARY'),
+      (m) => typeof m.content === 'string' && m.content.includes('CONVERSATION SUMMARY'),
     )
     expect(hasSummary).toBe(true)
     expect(newHistory.length).toBeLessThan(preCount)

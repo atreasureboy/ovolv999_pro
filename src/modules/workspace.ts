@@ -5,7 +5,12 @@
  * (generated files, logs, reports) to an isolated per-session directory.
  */
 
-import type { AgentModule, ModuleBootContext, ModuleBootResult, ModuleDescription } from '../core/module.js'
+import type {
+  AgentModule,
+  ModuleBootContext,
+  ModuleBootResult,
+  ModuleDescription,
+} from '../core/module.js'
 
 export class WorkspaceModule implements AgentModule {
   readonly name = 'workspace'

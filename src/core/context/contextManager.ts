@@ -2,11 +2,7 @@ import type OpenAI from 'openai'
 import type { OpenAIMessage, IHookRunner } from '../types.js'
 import type { EventLog } from '../eventLog.js'
 import type { Renderer } from '../../ui/renderer.js'
-import {
-  maybeCompact,
-  calculateContextState,
-  MODEL_MAX_CONTEXT_TOKENS,
-} from '../compact.js'
+import { maybeCompact, calculateContextState, MODEL_MAX_CONTEXT_TOKENS } from '../compact.js'
 import { truncateToolResult } from './toolResultBudget.js'
 import { snipCompact, SNIP_KEEP_RECENT } from '../snipCompact.js'
 

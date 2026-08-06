@@ -5,6 +5,7 @@ import {
   resolveAgentConfig,
   deriveModuleNames,
   applyAgentToConfig,
+  validateAgentConfig,
   type AgentConfig,
 } from '../src/core/agentPresets.js'
 import type { EngineConfig } from '../src/core/types.js'
@@ -31,13 +32,17 @@ describe('resolveAgentConfig', () => {
 
   it('falls back to general-purpose for unknown preset', () => {
     const config = resolveAgentConfig({ preset: 'nonexistent' })
-    expect(config.identity.systemPrompt).toBe(AGENT_PRESETS['general-purpose'].identity.systemPrompt)
+    expect(config.identity.systemPrompt).toBe(
+      AGENT_PRESETS['general-purpose'].identity.systemPrompt,
+    )
     expect(config.maxIterations).toBe(AGENT_PRESETS['general-purpose'].maxIterations)
   })
 
   it('falls back to general-purpose when nothing specified', () => {
     const config = resolveAgentConfig({})
-    expect(config.identity.systemPrompt).toBe(AGENT_PRESETS['general-purpose'].identity.systemPrompt)
+    expect(config.identity.systemPrompt).toBe(
+      AGENT_PRESETS['general-purpose'].identity.systemPrompt,
+    )
     expect(config.maxIterations).toBe(AGENT_PRESETS['general-purpose'].maxIterations)
   })
 
@@ -204,9 +209,7 @@ describe('applyAgentToConfig', () => {
       },
     }
     const result = applyAgentToConfig(config)
-    expect(result.enabledModules).toEqual(
-      expect.arrayContaining(['memory', 'reflection']),
-    )
+    expect(result.enabledModules).toEqual(expect.arrayContaining(['memory', 'reflection']))
   })
 
   it('preserves base config fields not overridden by agent', () => {
@@ -220,5 +223,42 @@ describe('applyAgentToConfig', () => {
     expect(result.model).toBe('test-model')
     expect(result.apiKey).toBe('test-key')
     expect(result.cwd).toBe('/test')
+  })
+})
+
+// ── validateAgentConfig (LLM-supplied agent_config sanitization) ───────────
+
+describe('validateAgentConfig', () => {
+  const base = { identity: { systemPrompt: 'be helpful' } }
+
+  it('wraps a string systemPrompt into a function', () => {
+    const config = validateAgentConfig(base)
+    expect(config?.identity.systemPrompt('/x')).toBe('be helpful')
+  })
+
+  it('returns null for malformed input', () => {
+    expect(validateAgentConfig(null)).toBeNull()
+    expect(validateAgentConfig('not an object')).toBeNull()
+    expect(validateAgentConfig({ identity: {} })).toBeNull()
+    expect(validateAgentConfig({ identity: null })).toBeNull()
+    expect(validateAgentConfig({})).toBeNull()
+  })
+
+  it('clamps maxIterations to 200', () => {
+    expect(validateAgentConfig({ ...base, maxIterations: 9999 })?.maxIterations).toBe(200)
+    expect(validateAgentConfig({ ...base, maxIterations: 10 })?.maxIterations).toBe(10)
+  })
+
+  it('rejects non-positive timeoutMs and caps at 1 hour', () => {
+    expect(validateAgentConfig({ ...base, timeoutMs: 0 })?.timeoutMs).toBeUndefined()
+    expect(validateAgentConfig({ ...base, timeoutMs: -5 })?.timeoutMs).toBeUndefined()
+    expect(validateAgentConfig({ ...base, timeoutMs: '60000' })?.timeoutMs).toBeUndefined()
+    expect(validateAgentConfig({ ...base, timeoutMs: 60_000 })?.timeoutMs).toBe(60_000)
+    expect(validateAgentConfig({ ...base, timeoutMs: 99_999_999 })?.timeoutMs).toBe(3_600_000)
+  })
+
+  it('filters non-string tool entries', () => {
+    const config = validateAgentConfig({ ...base, tools: ['Read', 42, null, 'Bash'] })
+    expect(config?.tools).toEqual(['Read', 'Bash'])
   })
 })

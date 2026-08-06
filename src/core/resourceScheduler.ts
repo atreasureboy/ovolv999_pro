@@ -32,10 +32,7 @@ export class ResourceAcquireTimeoutError extends Error {
   }
 }
 
-export function claimsConflict(
-  existing: ResourceAccess,
-  incoming: ResourceAccess,
-): boolean {
+export function claimsConflict(existing: ResourceAccess, incoming: ResourceAccess): boolean {
   if (existing === 'exclusive' || incoming === 'exclusive') return true
   if (existing === 'write' || incoming === 'write') {
     return !(existing === 'read' && incoming === 'read')
@@ -69,10 +66,7 @@ export interface AcquireOptions {
 export class ResourceScheduler {
   private readonly held = new Map<string, HeldClaim[]>()
 
-  async acquire(
-    claims: ResourceClaim[],
-    opts: AcquireOptions = {},
-  ): Promise<ResourceLease> {
+  async acquire(claims: ResourceClaim[], opts: AcquireOptions = {}): Promise<ResourceLease> {
     const timeoutMs = opts.timeoutMs ?? 30_000
     const deadline = Date.now() + timeoutMs
 

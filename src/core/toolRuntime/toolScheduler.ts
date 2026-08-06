@@ -129,7 +129,13 @@ export class ToolScheduler {
         await this.executeParallelBatch(batch, toolContext, planMode, turnNumber, messages)
       } else {
         const aborted = await this.executeSerialBatch(
-          batch, toolContext, planMode, turnNumber, messages, turnAbortSignal, turnAbortController,
+          batch,
+          toolContext,
+          planMode,
+          turnNumber,
+          messages,
+          turnAbortSignal,
+          turnAbortController,
         )
         if (aborted) return { aborted: true }
       }
@@ -219,7 +225,12 @@ export class ToolScheduler {
       })
 
       const result = await executor.execute(
-        tc.id, tc.name, input, toolContext, planMode, turnNumber,
+        tc.id,
+        tc.name,
+        input,
+        toolContext,
+        planMode,
+        turnNumber,
       )
 
       sharedState.removeActiveToolCall(tc.id)

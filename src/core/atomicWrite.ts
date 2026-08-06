@@ -109,7 +109,9 @@ export async function atomicWrite(
   }
 }
 
-export async function statSafely(filePath: string): Promise<{ mtimeMs: number; size: number } | null> {
+export async function statSafely(
+  filePath: string,
+): Promise<{ mtimeMs: number; size: number } | null> {
   try {
     const s = await stat(filePath)
     return { mtimeMs: s.mtimeMs, size: s.size }

@@ -52,7 +52,7 @@ export class GlobTool implements Tool {
       return { content: 'Error: pattern is required', isError: true }
     }
 
-    const cwd = (typeof searchPath === 'string' && searchPath) ? searchPath : context.cwd
+    const cwd = typeof searchPath === 'string' && searchPath ? searchPath : context.cwd
 
     // Path security checks
     if (containsNullByte(cwd)) {
@@ -62,7 +62,10 @@ export class GlobTool implements Tool {
       return { content: 'Error: path traversal detected in path', isError: true }
     }
     if (!isPathWithin(cwd, context.cwd)) {
-      return { content: `Error: path must be within project directory (${context.cwd})`, isError: true }
+      return {
+        content: `Error: path must be within project directory (${context.cwd})`,
+        isError: true,
+      }
     }
 
     try {

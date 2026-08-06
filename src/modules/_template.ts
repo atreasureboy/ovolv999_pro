@@ -34,8 +34,8 @@ export class TemplateModule implements AgentModule {
   async boot(_ctx: ModuleBootContext): Promise<ModuleBootResult> {
     return {
       systemPromptSections: ['## My Module\nModule-specific instructions here...'],
-      tools: [],                    // 如果模块提供工具，在这里返回
-      toolContextPatch: {},         // 如果需要修改 ToolContext
+      tools: [], // 如果模块提供工具，在这里返回
+      toolContextPatch: {}, // 如果需要修改 ToolContext
     }
   }
 
@@ -52,7 +52,12 @@ export class TemplateModule implements AgentModule {
   }
 
   // ── Run: 每次工具调用后 ──
-  onToolCall(_toolName: string, _input: Record<string, unknown>, _result: ToolResult, _turnNumber: number): void {
+  onToolCall(
+    _toolName: string,
+    _input: Record<string, unknown>,
+    _result: ToolResult,
+    _turnNumber: number,
+  ): void {
     // 记录、分析、反应
   }
 
@@ -65,7 +70,7 @@ export class TemplateModule implements AgentModule {
   // ── Error: 出错时 ──
   onError(_error: EngineError, _ctx: ModuleErrorContext): ErrorRecoveryAction | void {
     // 返回恢复建议
-    return { action: 'continue' }   // continue | skip_turn | abort
+    return { action: 'continue' } // continue | skip_turn | abort
   }
 
   // ── Death: 任务完成 ──
@@ -80,7 +85,9 @@ export class TemplateModule implements AgentModule {
 
   // ── Persistence: 状态快照 ──
   onStateSnapshot(): Record<string, unknown> | null {
-    return { /* 你的模块状态 */ }
+    return {
+      /* 你的模块状态 */
+    }
   }
 
   onStateRestore(_state: Record<string, unknown>): void {

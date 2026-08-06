@@ -3,7 +3,10 @@ import { wrapMcpTool } from '../src/mcp/wrapper.js'
 import type { McpClient, McpContentBlock } from '../src/mcp/client.js'
 
 /** Minimal McpClient double — only serverName + callTool are used by the wrapper. */
-function mockClient(serverName: string, callTool: (name: string, args: Record<string, unknown>) => Promise<McpContentBlock[]>): McpClient {
+function mockClient(
+  serverName: string,
+  callTool: (name: string, args: Record<string, unknown>) => Promise<McpContentBlock[]>,
+): McpClient {
   return { serverName, callTool } as unknown as McpClient
 }
 
@@ -23,15 +26,19 @@ describe('wrapMcpTool', () => {
       inputSchema: { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] },
     })
     expect(tool.definition.function.parameters).toEqual({
-      type: 'object', properties: { x: { type: 'string' } }, required: ['x'],
+      type: 'object',
+      properties: { x: { type: 'string' } },
+      required: ['x'],
     })
   })
 
   it('execute calls the client and flattens text blocks', async () => {
-    const callTool = vi.fn(() => Promise.resolve([
-      { type: 'text', text: 'line 1' },
-      { type: 'text', text: 'line 2' },
-    ]))
+    const callTool = vi.fn(() =>
+      Promise.resolve([
+        { type: 'text', text: 'line 1' },
+        { type: 'text', text: 'line 2' },
+      ]),
+    )
     const client = mockClient('srv', callTool)
     const tool = wrapMcpTool(client, { name: 'do', description: 'd' })
     const res = await tool.execute({ x: 1 }, {} as never)
@@ -56,10 +63,12 @@ describe('wrapMcpTool', () => {
   })
 
   it('represents non-text blocks compactly', async () => {
-    const client = mockClient('srv', () => Promise.resolve([
-      { type: 'image', data: 'b64' },
-      { type: 'text', text: 'caption' },
-    ]))
+    const client = mockClient('srv', () =>
+      Promise.resolve([
+        { type: 'image', data: 'b64' },
+        { type: 'text', text: 'caption' },
+      ]),
+    )
     const tool = wrapMcpTool(client, { name: 'do' })
     const res = await tool.execute({}, {} as never)
     expect(res.content).toContain('[image block]')

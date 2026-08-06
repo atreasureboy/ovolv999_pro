@@ -52,7 +52,9 @@ export class BackgroundTaskManager {
     if (sessionDir) {
       try {
         mkdirSync(sessionDir, { recursive: true })
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
   }
 
@@ -113,7 +115,9 @@ export class BackgroundTaskManager {
       if (task.outputFile) {
         try {
           appendFileSync(task.outputFile, text, 'utf8')
-        } catch { /* best-effort */ }
+        } catch {
+          /* best-effort */
+        }
       }
     }
 
@@ -122,7 +126,7 @@ export class BackgroundTaskManager {
 
     proc.on('close', (code) => {
       task.info.exitCode = code
-      task.info.status = task.stopped ? 'stopped' : (code === 0 ? 'completed' : 'failed')
+      task.info.status = task.stopped ? 'stopped' : code === 0 ? 'completed' : 'failed'
       task.info.endTime = Date.now()
       task.info.durationMs = task.info.endTime - task.info.startTime
       task.process = null
@@ -163,14 +167,25 @@ export class BackgroundTaskManager {
     try {
       if (process.platform === 'win32') {
         try {
-          execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore', timeout: 2000 })
-        } catch { /* already gone */ }
+          execFileSync('taskkill', ['/T', '/F', '/PID', String(pid)], {
+            stdio: 'ignore',
+            timeout: 2000,
+          })
+        } catch {
+          /* already gone */
+        }
       } else {
-        try { process.kill(-pid, 'SIGTERM') } catch { /* group gone */ }
+        try {
+          process.kill(-pid, 'SIGTERM')
+        } catch {
+          /* group gone */
+        }
         setTimeout(() => {
           try {
             proc.kill('SIGKILL')
-          } catch { /* already gone */ }
+          } catch {
+            /* already gone */
+          }
         }, DEFAULT_SIGKILL_GRACE_MS)
       }
     } catch {

@@ -14,7 +14,10 @@ import { parseCriticOutput, formatMessagesForCritic } from '../src/prompts/criti
 function makeParsedToolCall(
   name: string,
   args: Record<string, unknown> = {},
-): { tc: { index: number; id: string; name: string; arguments: string }; input: Record<string, unknown> } {
+): {
+  tc: { index: number; id: string; name: string; arguments: string }
+  input: Record<string, unknown>
+} {
   return {
     tc: { index: 0, id: `tc_${name}`, name, arguments: JSON.stringify(args) },
     input: args,
@@ -39,7 +42,7 @@ function makeTool(name: string, concurrencySafe: boolean): Tool {
         parameters: { type: 'object', properties: {} },
       },
     },
-    execute: async () => ({ content: 'ok', isError: false }),
+    execute: () => Promise.resolve({ content: 'ok', isError: false }),
   }
 }
 
@@ -127,7 +130,11 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('MySafeB', {}),
       makeParsedToolCall('MyUnsafe', {}),
     ]
-    const tools = [makeTool('MySafeA', true), makeTool('MySafeB', true), makeTool('MyUnsafe', false)]
+    const tools = [
+      makeTool('MySafeA', true),
+      makeTool('MySafeB', true),
+      makeTool('MyUnsafe', false),
+    ]
     const batches = partitionToolCalls(calls, tools)
     // MySafeA + MySafeB merge into one parallel batch; MyUnsafe is serial
     expect(batches).toHaveLength(2)
@@ -145,9 +152,7 @@ describe('estimateTokens', () => {
   })
 
   it('estimates tokens for simple text messages', () => {
-    const messages = [
-      { role: 'user' as const, content: 'Hello world' },
-    ]
+    const messages = [{ role: 'user' as const, content: 'Hello world' }]
     // "Hello world" = 11 chars + 20 envelope = 31 chars / 3.5 ≈ 9 tokens
     const tokens = estimateTokens(messages)
     expect(tokens).toBeGreaterThan(0)
@@ -268,17 +273,13 @@ describe('parseCriticOutput', () => {
   it('returns structured issues for non-OK responses', () => {
     const output = '[问题] 重复劳动\n[纠正] 换个策略'
     const result = parseCriticOutput(output)
-    expect(result).toEqual([
-      { problem: '重复劳动', correction: '换个策略' },
-    ])
+    expect(result).toEqual([{ problem: '重复劳动', correction: '换个策略' }])
   })
 
   it('falls back to raw mode when structured markers are absent', () => {
     const output = '[问题] something'
     const result = parseCriticOutput('  ' + output + '  ')
-    expect(result).toEqual([
-      { problem: '[问题] something', correction: '' },
-    ])
+    expect(result).toEqual([{ problem: '[问题] something', correction: '' }])
   })
 })
 
@@ -292,9 +293,7 @@ describe('formatMessagesForCritic', () => {
 
   it('formats tool results with truncation', () => {
     const longResult = 'A'.repeat(1000)
-    const messages = [
-      { role: 'tool' as const, content: longResult, name: 'Bash' },
-    ]
+    const messages = [{ role: 'tool' as const, content: longResult, name: 'Bash' }]
     const formatted = formatMessagesForCritic(messages)
     expect(formatted).toContain('[TOOL_RESULT:Bash]')
     expect(formatted.length).toBeLessThan(longResult.length)

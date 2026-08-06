@@ -23,7 +23,8 @@
  *       "time": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything"] }
  *     },
  *     "verifyCommands": ["npm run typecheck", "npm test"],
- *     "pricing": { "inputPer1M": 2.5, "outputPer1M": 10 }
+ *     "pricing": { "inputPer1M": 2.5, "outputPer1M": 10 },
+ *     "maxCostUsd": 5
  *   }
  *
  * mcpServers: each entry spawns a stdio MCP server; its tools are discovered at
@@ -78,6 +79,8 @@ export const agentConfigSchema = z.object({
   /** Commands run by the Agent verification gate (replaces hardcoded `tsc`). */
   verifyCommands: z.array(z.string()).optional(),
   pricing: pricingSchema.optional(),
+  /** USD cost ceiling — the engine stops before the LLM call that would exceed it. */
+  maxCostUsd: z.number().positive().optional(),
 })
 
 // Types are derived from the schemas so structure and validator can never drift.

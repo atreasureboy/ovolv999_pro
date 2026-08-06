@@ -69,7 +69,11 @@ export class ProgressMonitor {
     const fp = fingerprint(input)
     const key: ToolCallKey = { tool, inputFingerprint: fp }
 
-    if (this.lastToolCall && this.lastToolCall.tool === tool && this.lastToolCall.inputFingerprint === fp) {
+    if (
+      this.lastToolCall &&
+      this.lastToolCall.tool === tool &&
+      this.lastToolCall.inputFingerprint === fp
+    ) {
       this.repeatedToolCalls++
     } else {
       this.repeatedToolCalls = 0

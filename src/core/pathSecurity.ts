@@ -46,7 +46,9 @@ export function isPathWithin(candidate: string, allowedBase: string): boolean {
     try {
       const real = realpathSync(resolved)
       const realBase = realpathSync(base)
-      return real === realBase || real.startsWith(realBase + '/') || real.startsWith(realBase + '\\')
+      return (
+        real === realBase || real.startsWith(realBase + '/') || real.startsWith(realBase + '\\')
+      )
     } catch {
       // If the path doesn't exist yet (e.g., Write), the resolve check is sufficient —
       // the file will be created inside the allowed base on disk.
@@ -54,6 +56,35 @@ export function isPathWithin(candidate: string, allowedBase: string): boolean {
     }
   }
   return false
+}
+
+/**
+ * Known path field names used by file-operation tools.
+ * The tool executor scans tool inputs for these fields and validates them
+ * as a defense-in-depth layer — even if a tool forgets its own path checks,
+ * the engine will catch it centrally.
+ */
+const KNOWN_PATH_FIELDS = new Set(['file_path', 'path', 'workdir', 'dir'])
+
+/**
+ * Validate all known path fields in a tool input against the cwd.
+ * Returns the first validation error as a string, or null if all paths are safe.
+ */
+export function validatePathInputs(input: Record<string, unknown>, cwd: string): string | null {
+  for (const field of KNOWN_PATH_FIELDS) {
+    const value = input[field]
+    if (typeof value !== 'string' || value.length === 0) continue
+    if (containsNullByte(value)) {
+      return `Error: ${field} contains null byte`
+    }
+    if (containsPathTraversal(value)) {
+      return `Error: path traversal detected in ${field}`
+    }
+    if (!isPathWithin(value, cwd)) {
+      return `Error: ${field} must be within the project directory (${cwd})`
+    }
+  }
+  return null
 }
 
 /** Sync realpath resolver — exported for testing. Use with care (blocks event loop). */

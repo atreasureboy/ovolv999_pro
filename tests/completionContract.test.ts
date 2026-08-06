@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { evaluateCompletion, type CompletionInput, type CompletionStatus } from '../src/core/completionContract.js'
+import {
+  evaluateCompletion,
+  type CompletionInput,
+  type CompletionStatus,
+} from '../src/core/completionContract.js'
 
 function makeInput(overrides: Partial<CompletionInput> = {}): CompletionInput {
   return {
@@ -35,9 +39,7 @@ describe('evaluateCompletion', () => {
   // ── Exhausted ─────────────────────────────────────────────────────
 
   it('returns exhausted when iterations hit max', () => {
-    const result = evaluateCompletion(
-      makeInput({ iterationsUsed: 100, iterationsMax: 100 }),
-    )
+    const result = evaluateCompletion(makeInput({ iterationsUsed: 100, iterationsMax: 100 }))
     expect(result.status).toBe('exhausted' satisfies CompletionStatus)
     if (result.status === 'exhausted') {
       expect(result.iterationsUsed).toBe(100)
@@ -46,9 +48,7 @@ describe('evaluateCompletion', () => {
   })
 
   it('does not return exhausted when under max', () => {
-    const result = evaluateCompletion(
-      makeInput({ iterationsUsed: 99, iterationsMax: 100 }),
-    )
+    const result = evaluateCompletion(makeInput({ iterationsUsed: 99, iterationsMax: 100 }))
     expect(result.status).not.toBe('exhausted')
   })
 
@@ -70,9 +70,7 @@ describe('evaluateCompletion', () => {
   })
 
   it('returns blocked when unresolved blockers exist', () => {
-    const result = evaluateCompletion(
-      makeInput({ unresolvedBlockers: ['Missing dependency'] }),
-    )
+    const result = evaluateCompletion(makeInput({ unresolvedBlockers: ['Missing dependency'] }))
     expect(result.status).toBe('blocked' satisfies CompletionStatus)
   })
 
@@ -101,9 +99,7 @@ describe('evaluateCompletion', () => {
     const result = evaluateCompletion(
       makeInput({
         taskKind: 'informational',
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Answer the question', satisfied: true },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Answer the question', satisfied: true }],
       }),
     )
     expect(result.status).toBe('completed' satisfies CompletionStatus)
@@ -113,9 +109,7 @@ describe('evaluateCompletion', () => {
     const result = evaluateCompletion(
       makeInput({
         taskKind: 'analysis',
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Complete audit', satisfied: false },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Complete audit', satisfied: false }],
       }),
     )
     expect(result.status).toBe('partial' satisfies CompletionStatus)
@@ -129,18 +123,14 @@ describe('evaluateCompletion', () => {
         taskKind: 'mutation',
         changedFiles: ['a.ts'],
         verification: { executed: true, passed: true, failed: [] },
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Fix the bug', satisfied: true },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Fix the bug', satisfied: true }],
       }),
     )
     expect(result.status).toBe('completed' satisfies CompletionStatus)
   })
 
   it('returns incomplete for mutation with no changes and no criteria', () => {
-    const result = evaluateCompletion(
-      makeInput({ taskKind: 'mutation', changedFiles: [] }),
-    )
+    const result = evaluateCompletion(makeInput({ taskKind: 'mutation', changedFiles: [] }))
     expect(result.status).toBe('incomplete' satisfies CompletionStatus)
   })
 
@@ -149,9 +139,7 @@ describe('evaluateCompletion', () => {
       makeInput({
         taskKind: 'mutation',
         changedFiles: ['a.ts'],
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Fix bug', satisfied: true },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Fix bug', satisfied: true }],
         verification: { executed: true, passed: false, failed: ['tsc'] },
       }),
     )
@@ -177,9 +165,7 @@ describe('evaluateCompletion', () => {
       makeInput({
         taskKind: 'mutation',
         changedFiles: [],
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Fix bug', satisfied: false },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Fix bug', satisfied: false }],
       }),
     )
     expect(result.status).toBe('incomplete' satisfies CompletionStatus)
@@ -239,9 +225,7 @@ describe('evaluateCompletion', () => {
         taskKind: 'mutation',
         changedFiles: ['a.ts', 'b.ts'],
         verification: { executed: true, passed: true, failed: [] },
-        acceptanceCriteria: [
-          { id: 'c1', description: 'Fix', satisfied: true },
-        ],
+        acceptanceCriteria: [{ id: 'c1', description: 'Fix', satisfied: true }],
       }),
     )
     expect(result.status).toBe('completed')

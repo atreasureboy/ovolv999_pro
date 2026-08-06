@@ -14,10 +14,7 @@ export class ToolPolicy {
     this.config = config
   }
 
-  getExposedDefinitions(
-    allTools: Tool[],
-    planMode: boolean,
-  ): ToolDefinition[] {
+  getExposedDefinitions(allTools: Tool[], planMode: boolean): ToolDefinition[] {
     let defs = allTools.map((t) => t.definition)
 
     if (this.config.agent?.tools) {
@@ -39,11 +36,7 @@ export class ToolPolicy {
     return defs
   }
 
-  checkExecutionAllowed(
-    allTools: Tool[],
-    toolName: string,
-    planMode: boolean,
-  ): string | null {
+  checkExecutionAllowed(allTools: Tool[], toolName: string, planMode: boolean): string | null {
     // Find the tool to get its declarations
     const tool = allTools.find((t) => t.name === toolName)
 

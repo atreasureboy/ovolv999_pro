@@ -110,7 +110,10 @@ export function cancelled(summary: string, content?: string): StructuredToolResu
   return { status: 'cancelled', summary, content, retryable: false }
 }
 
-export function timedOut(summary: string, opts: { stdout?: string; stderr?: string } = {}): StructuredToolResult {
+export function timedOut(
+  summary: string,
+  opts: { stdout?: string; stderr?: string } = {},
+): StructuredToolResult {
   return {
     status: 'timed_out',
     summary,
@@ -126,7 +129,10 @@ export function routeLargeOutput(
   output: string,
   artifactId: string,
   threshold: number = DEFAULT_LARGE_OUTPUT_BYTES,
-): { artifact: { id: string; kind: string; contentType: string; sizeBytes: number }; preview: string } | null {
+): {
+  artifact: { id: string; kind: string; contentType: string; sizeBytes: number }
+  preview: string
+} | null {
   if (output.length <= threshold) return null
   const head = output.slice(0, threshold >> 1)
   const tail = output.slice(-(threshold >> 1))

@@ -174,6 +174,8 @@ async function runAgentTaskInner(
     return { content: 'Error: AgentTool 未初始化', isError: true }
   }
 
+  const mainConfig = _currentConfig
+
   const mainRenderer = _currentRenderer as {
     agentStart: (desc: string, type: string) => void
     agentDone: (desc: string, success: boolean) => void
@@ -205,7 +207,7 @@ async function runAgentTaskInner(
     : (_currentRenderer as Renderer)
 
   const childConfig: EngineConfig = {
-    ..._currentConfig,
+    ...mainConfig,
     agent: agentConfig,
     cwd: context.cwd,
     hookRunner: undefined,
@@ -214,16 +216,14 @@ async function runAgentTaskInner(
 
   const childEngine = _engineFactory(childConfig, childRenderer)
 
-  const normalizedPrompt = normalizeDelegatedPrompt(prompt, _currentConfig)
+  const normalizedPrompt = normalizeDelegatedPrompt(prompt, mainConfig)
   const placeholdersReplaced = normalizedPrompt !== prompt
   const inheritedContextLines = [
-    `- session_dir: ${_currentConfig.sessionDir ?? '未设置'}`,
+    `- session_dir: ${mainConfig.sessionDir ?? '未设置'}`,
     `- call_depth: ${myDepth}`,
   ]
 
-  const sessionDirHint = _currentConfig.sessionDir
-    ? `\n- 会话目录固定为: ${_currentConfig.sessionDir}`
-    : ''
+  const sessionDirHint = mainConfig.sessionDir ? `\n- 会话目录固定为: ${mainConfig.sessionDir}` : ''
   const delegatedPrompt = [
     '[任务委派契约]',
     '- 严格执行下方"子任务指令"，不得擅自替换任务目标或范围。',
@@ -242,7 +242,7 @@ async function runAgentTaskInner(
     normalizedPrompt,
   ].join('\n')
 
-  appendAgentEvent(_currentConfig, {
+  appendAgentEvent(mainConfig, {
     event: 'delegation.start',
     agent_label: agentLabel,
     description,
@@ -268,8 +268,27 @@ async function runAgentTaskInner(
     mainRenderer.agentHeartbeat(agentLabel, description, elapsedSec)
   }, HEARTBEAT_MS)
 
+  // ── Deadline / timeout enforcement ──
+  const timeoutMs = agentConfig.timeoutMs ?? 0
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null
+  if (timeoutMs > 0) {
+    timeoutTimer = setTimeout(() => {
+      childEngine.abort()
+      appendAgentEvent(mainConfig, {
+        event: 'delegation.timeout',
+        agent_label: agentLabel,
+        description,
+        timeout_ms: timeoutMs,
+        elapsed_ms: Date.now() - agentStartTime,
+      })
+    }, timeoutMs)
+    // Allow unref so the timer doesn't keep the process alive in tests
+    if (typeof timeoutTimer.unref === 'function') timeoutTimer.unref()
+  }
+
   try {
     const { result } = await childEngine.runTurn(delegatedPrompt, [])
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     clearInterval(heartbeatTimer)
     const durationMs = Date.now() - agentStartTime
 
@@ -281,7 +300,7 @@ async function runAgentTaskInner(
     if (verify && result.reason !== 'error' && !agentConfig.identity.planMode) {
       const verifyResult = runVerification(
         context.cwd,
-        _currentConfig.verifyCommands ?? DEFAULT_VERIFY_COMMANDS,
+        mainConfig.verifyCommands ?? DEFAULT_VERIFY_COMMANDS,
       )
       if (verifyResult) {
         const icon = verifyResult.passed ? '✓' : '✗'
@@ -335,10 +354,11 @@ async function runAgentTaskInner(
       isError: false,
     }
   } catch (err: unknown) {
+    if (timeoutTimer) clearTimeout(timeoutTimer)
     clearInterval(heartbeatTimer)
     mainRenderer.agentDone(description, false)
     if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
-    appendAgentEvent(_currentConfig, {
+    appendAgentEvent(mainConfig, {
       event: 'delegation.error',
       agent_label: agentLabel,
       description,
@@ -396,6 +416,10 @@ export class AgentTool implements Tool {
           },
           agent_config: { type: 'object', description: '自定义配置（覆盖 subagent_type）' },
           max_iterations: { type: 'number', description: '最大执行轮数（覆盖预设默认值）' },
+          timeout_ms: {
+            type: 'number',
+            description: '最大执行时间（毫秒），超时自动中止子 agent（上限 1 小时）',
+          },
           verify: {
             type: 'boolean',
             description: '验证闸门：完成后自动跑 tsc --noEmit 检查类型安全（默认 false）',
@@ -439,6 +463,9 @@ export class AgentTool implements Tool {
 
     if (typeof input.max_iterations === 'number') {
       agentConfig.maxIterations = Math.min(input.max_iterations, 200)
+    }
+    if (typeof input.timeout_ms === 'number' && input.timeout_ms > 0) {
+      agentConfig.timeoutMs = Math.min(input.timeout_ms, 3_600_000) // max 1 hour
     }
 
     // Consult parent modules' onDelegation hook — they can modify the child config

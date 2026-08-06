@@ -46,7 +46,10 @@ import { fileURLToPath } from 'url'
         if (eq <= 0) continue
         const key = t.slice(0, eq).trim()
         let val = t.slice(eq + 1).trim()
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        if (
+          (val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))
+        ) {
           val = val.slice(1, -1)
         }
         if (!process.env[key]) process.env[key] = val
@@ -222,10 +225,11 @@ OPTIONS
 ENVIRONMENT
   OPENAI_API_KEY         Required — OpenAI API key
   OPENAI_BASE_URL        Optional — compatible endpoint URL
+  OVOGO_MAX_COST_USD     Optional — stop when cumulative cost reaches this USD budget
 
 CONFIG (.ovogo/agent.json)
   model, maxIterations, maxContextTokens, modules, permission,
-  mcpServers, verifyCommands, pricing — see src/config/agentConfig.ts
+  mcpServers, verifyCommands, pricing, maxCostUsd — see src/config/agentConfig.ts
 
 TOOLS
   Bash          Execute shell commands
@@ -962,6 +966,9 @@ async function main(): Promise<void> {
     permissionChecker,
     pricing,
     verifyCommands,
+    maxCostUsd: process.env.OVOGO_MAX_COST_USD
+      ? parseFloat(process.env.OVOGO_MAX_COST_USD)
+      : agentConfig.maxCostUsd,
   }
 
   // Plan-mode config: read-only analysis, no reflection (plans aren't completed work)
@@ -1036,6 +1043,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`\x1b[31mFatal:\x1b[0m ${err instanceof Error ? err.message : String(err)}\n`)
+  process.stderr.write(
+    `\x1b[31mFatal:\x1b[0m ${err instanceof Error ? err.message : String(err)}\n`,
+  )
   process.exit(1)
 })

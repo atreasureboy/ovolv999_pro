@@ -58,9 +58,7 @@ import type { EngineError, ModuleErrorContext } from './module.js'
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /** Normalize a modelCapabilities ProviderId to a providerAdapter ProviderId. */
-function normalizeAdapterProvider(
-  provider: string,
-): ProviderId {
+function normalizeAdapterProvider(provider: string): ProviderId {
   switch (provider) {
     case 'anthropic':
     case 'openai':
@@ -99,7 +97,11 @@ function classifyEngineError(err: unknown): EngineError {
     }
   }
 
-  if (msg.includes('context length') || msg.includes('context_length_exceeded') || msg.includes('maximum context')) {
+  if (
+    msg.includes('context length') ||
+    msg.includes('context_length_exceeded') ||
+    msg.includes('maximum context')
+  ) {
     return {
       class: 'degradable',
       source: 'llm',
@@ -122,9 +124,9 @@ function classifyEngineError(err: unknown): EngineError {
     msg.includes('fetch failed') ||
     msg.includes('5xx') ||
     msg.includes('503') ||
-    msg.includes('504') ||   // gateway timeout
+    msg.includes('504') || // gateway timeout
     msg.includes('502') ||
-    msg.includes('429') ||   // rate limit (should be retryable after backoff)
+    msg.includes('429') || // rate limit (should be retryable after backoff)
     msg.includes('overloaded') ||
     msg.includes('internal_error') ||
     msg.includes('server_error') ||
@@ -229,9 +231,11 @@ export class ExecutionEngine {
     this.toolRegistry.registerAll(baseTools)
 
     // Classify task intent — must happen before ToolPolicy which consumes it
-    this.taskIntent = config.taskIntent ?? classifyTaskIntent(config.systemPrompt ?? '', {
-      planMode: config.planMode,
-    })
+    this.taskIntent =
+      config.taskIntent ??
+      classifyTaskIntent(config.systemPrompt ?? '', {
+        planMode: config.planMode,
+      })
 
     this.toolPolicy = new ToolPolicy({ agent: config.agent, taskIntent: this.taskIntent })
     this.eventEmitter = new RunEventEmitter()
@@ -291,7 +295,12 @@ export class ExecutionEngine {
     const detectedProvider = detectProvider(config.model)
     // Normalize to adapter-supported ProviderId: most providers are OpenAI-compatible
     const adapterProviderId = normalizeAdapterProvider(config.provider ?? detectedProvider)
-    this.providerAdapter = createProviderAdapter(this.client, adapterProviderId, config.apiKey, config.baseURL)
+    this.providerAdapter = createProviderAdapter(
+      this.client,
+      adapterProviderId,
+      config.apiKey,
+      config.baseURL,
+    )
     this.modelGateway = new ModelGateway({
       adapter: this.providerAdapter,
       adapterFactory: (provider, _model) => {
@@ -311,19 +320,32 @@ export class ExecutionEngine {
         this.eventLog!.append('run_started', 'engine', { userMessage: e.userMessage.slice(0, 200) })
       })
       this.eventEmitter.on('RUN_COMPLETED', (e) => {
-        this.eventLog!.append('run_completed', 'engine', { reason: e.result.reason, output: e.result.output.slice(0, 200) })
+        this.eventLog!.append('run_completed', 'engine', {
+          reason: e.result.reason,
+          output: e.result.output.slice(0, 200),
+        })
       })
       this.eventEmitter.on('RUN_FAILED', (e) => {
-        this.eventLog!.append('run_failed', 'engine', { error: e.error, output: e.output.slice(0, 200) })
+        this.eventLog!.append('run_failed', 'engine', {
+          error: e.error,
+          output: e.output.slice(0, 200),
+        })
       })
       this.eventEmitter.on('MODEL_REQUESTED', (e) => {
         this.eventLog!.append('model_requested', 'engine', { model: e.model })
       })
       this.eventEmitter.on('MODEL_COMPLETED', (e) => {
-        this.eventLog!.append('model_completed', 'engine', { finishReason: e.finishReason, toolCallCount: e.toolCallCount })
+        this.eventLog!.append('model_completed', 'engine', {
+          finishReason: e.finishReason,
+          toolCallCount: e.toolCallCount,
+        })
       })
       this.eventEmitter.on('STALL_DETECTED', (e) => {
-        this.eventLog!.append('stall_detected', 'engine', { kind: e.kind, reason: e.reason, action: e.action })
+        this.eventLog!.append('stall_detected', 'engine', {
+          kind: e.kind,
+          reason: e.reason,
+          action: e.action,
+        })
       })
     }
 
@@ -551,7 +573,9 @@ export class ExecutionEngine {
     })
 
     const systemPrompt = this.buildSystemPrompt(planMode, moduleSections)
-    this.contextManager.setSystemPromptTokens(this.contextManager.estimateSystemPromptTokens(systemPrompt))
+    this.contextManager.setSystemPromptTokens(
+      this.contextManager.estimateSystemPromptTokens(systemPrompt),
+    )
     const exposedTools = this.getToolDefinitions(planMode, moduleTools)
 
     const turnAbortController = new AbortController()
@@ -577,241 +601,312 @@ export class ExecutionEngine {
       availableToolNames: exposedTools.map((t) => t.name),
     })
 
-    let result: TurnResult = { stopped: true, reason: 'max_iterations', output: '' }
+    // Sentinel: while `result` is still this exact object, no exit path in the
+    // loop has decided yet (every decision creates a fresh object, then breaks).
+    const indecisive: TurnResult = { stopped: true, reason: 'max_iterations', output: '' }
+    let result: TurnResult = indecisive
     let lastToolName: string | undefined
+    let retryCount = 0
+    const MAX_RETRIES = 3
+    const BASE_DELAY_MS = 2000
+    // Outer retry loop — re-entered on recoverable errors with exponential backoff.
+    // The try/finally spans the whole loop so currentTurnAbortController stays
+    // live across retries (clearing it per attempt would break abort()).
     try {
-      while (iterations < this.config.maxIterations) {
-        if (turnAbortController.signal.aborted) {
-          result = { stopped: true, reason: 'error', output: finalOutput }
-          break
-        }
-
-        iterations++
-        turnNumber++
-        this.sharedState.setIteration(iterations)
-        this.progressMonitor.tick()
-
-        this.eventEmitter.emit({ type: 'ITERATION_STARTED', iteration: iterations })
-
-        if (this.softAbortRequested) {
-          this.softAbortRequested = false
-          result = { stopped: true, reason: 'interrupted', output: finalOutput }
-          break
-        }
-
-        // Stall detection — drive actual action
-        // ExecutionProfile influences sensitivity: high-effort tasks get more tolerance
-        const stallVerdict = this.progressMonitor.detectStall()
-        // deep/autonomous profiles get tolerance: skip soft-stall to allow complex exploration
-        const isLenientStall = this.currentExecutionProfile === 'deep' || this.currentExecutionProfile === 'autonomous'
-        if (stallVerdict.kind !== 'progressing') {
-          this.eventEmitter.emit({
-            type: 'STALL_DETECTED',
-            kind: stallVerdict.kind,
-            reason: stallVerdict.reason,
-            action: stallVerdict.action,
-          })
-
-          // Drive actual intervention based on stall kind
-          // High-effort profiles skip soft-stall injections to allow deeper exploration
-          if (stallVerdict.kind === 'hard-stall' || (stallVerdict.kind === 'soft-stall' && !isLenientStall)) {
-            const interventionMsg = `[SYSTEM: Stall detected — ${stallVerdict.reason}]\nAction: ${stallVerdict.action}. Please reassess your approach and make meaningful progress.`
-            messages.push({ role: 'user', content: interventionMsg })
-          }
-        }
-
-        await this.evaluateContextBudget(messages)
-
-        for (const module of this.modules) {
-          if (!module.onIteration) continue
-          const iterResult = await module.onIteration({
-            iteration: iterations,
-            messages,
-            abortSignal: turnAbortController.signal,
-            eventLog: this.eventLog,
-          })
-          if (iterResult?.injectMessage) {
-            const msg = iterResult.injectMessage
-            this.renderer.warn(`[${module.name}] ${msg.split('\n')[0]}`)
-            this.eventLog?.append('module_flag', module.name, {
-              message: msg.slice(0, 500),
-              iteration: iterations,
-            })
-            messages.push({ role: 'user', content: msg })
-          }
-        }
-
-        // ── Streaming LLM call ──
-        const { assistantText, finishReason, rawToolCalls } = await this.callLLM(
-          systemPrompt,
-          messages,
-          exposedTools,
-          turnAbortController.signal,
-        )
-
-        // Usage is already recorded in callLLM via ModelGateway's onUsage callback
-        // Don't record again to avoid double-counting
-
-        this.eventEmitter.emit({
-          type: 'MODEL_COMPLETED',
-          assistantText,
-          finishReason,
-          toolCallCount: rawToolCalls.length,
-        })
-
-        if (assistantText) {
-          // Filter thinking tags before recording as final output
-          finalOutput = this.thinkingFilter.push(assistantText)
-        }
-
-        const assistantMsg: OpenAIMessage = {
-          role: 'assistant',
-          content: assistantText || null,
-          tool_calls:
-            rawToolCalls.length > 0
-              ? rawToolCalls.map((tc) => ({
-                  id: tc.id,
-                  type: 'function' as const,
-                  function: { name: tc.name, arguments: tc.arguments },
-                }))
-              : undefined,
-        }
-        messages.push(assistantMsg)
-
-        if (finishReason === 'stop' || rawToolCalls.length === 0) {
-          // ── Completion Contract check ───────────────────────────────
-          const changedFiles = this.workingState.filesChanged
-          const verificationPassed = this.workingState.verification.failed.length === 0
-          const verdict = evaluateCompletion({
-            taskKind: this.taskIntent.kind,
-            modelStopped: finishReason === 'stop',
-            acceptanceCriteria: this.taskIntent.explicitAcceptanceCriteria,
-            verification: {
-              executed: this.workingState.verification.passed.length + this.workingState.verification.failed.length > 0,
-              passed: verificationPassed,
-              failed: this.workingState.verification.failed,
-            },
-            activeWorkers: [],
-            unresolvedBlockers: this.workingState.unresolved,
-            changedFiles,
-            iterationsUsed: iterations,
-            iterationsMax: this.config.maxIterations,
-          })
-
-          if (verdict.status === 'incomplete' && iterations < this.config.maxIterations) {
-            // Task not truly done — inject a continuation prompt
-            const remaining = verdict.remaining.join('; ')
-            const continuationMsg = `[SYSTEM: Task incomplete — ${remaining}]\nPlease continue working toward the task goal. The following items remain unresolved.`
-            messages.push({ role: 'user', content: continuationMsg })
-            this.eventEmitter.emit({
-              type: 'STALL_DETECTED',
-              kind: 'soft-stall',
-              reason: 'task incomplete per completion contract',
-              action: 'continue',
-            })
-            continue
-          }
-
-          result = {
-            stopped: true,
-            reason: 'stop_sequence',
-            output: finalOutput,
-            completionStatus: verdict.status,
-          }
-          break
-        }
-
-        const parsedCalls: ParsedToolCall[] = rawToolCalls.map((tc) => {
-          let input: Record<string, unknown>
-          let parseError: string | undefined
-          try {
-            input = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
-          } catch (err: unknown) {
-            input = {}
-            parseError = err instanceof Error ? err.message : String(err)
-          }
-          return { tc, input, parseError }
-        })
-
-        if (parsedCalls.length > 0) {
-          lastToolName = parsedCalls[parsedCalls.length - 1].tc.name
-        }
-
-        // Delegate to ToolScheduler (which uses ToolExecutor internally)
-        const { aborted } = await this.toolScheduler.schedule(
-          parsedCalls,
-          toolContext,
-          planMode,
-          turnAbortController,
-          messages,
-          turnNumber,
-        )
-
-        if (aborted || turnAbortController.signal.aborted) {
-          result = { stopped: true, reason: 'error', output: finalOutput }
-          break
-        }
-
-        // Re-sync WorkingState: ToolExecutor creates immutable copies on update,
-        // so Engine's reference must be refreshed after each tool batch.
-        const updatedWs = this.toolExecutor.currentWorkingState
-        if (updatedWs) {
-          this.workingState = updatedWs
-        }
-      }
-
-      if (!result) {
-        this.renderer.warn(`Max iterations (${this.config.maxIterations}) reached`)
-        this.eventEmitter.emit({ type: 'MAX_ITERATIONS_REACHED', maxIterations: this.config.maxIterations })
-        result = { stopped: true, reason: 'max_iterations', output: finalOutput }
-      }
-    } catch (err: unknown) {
-      // ── Unified error classification + module notification ──
-      const engineErr = classifyEngineError(err)
-      const rawMsg = err instanceof Error ? err.message : String(err)
-
-      this.config.hookRunner?.runOnError?.(engineErr.originalError, {
-        turnNumber: iterations,
-        lastToolName,
-      })
-
-      this.eventLog?.append('error', 'engine', {
-        stage: 'run',
-        turn: iterations,
-        error: engineErr.message,
-        class: engineErr.class,
-        ...(lastToolName ? { lastToolName } : {}),
-      })
-
-      this.eventEmitter.emit({ type: 'RUN_FAILED', error: engineErr.message, output: finalOutput })
-
-      // Call module.onError() for each module — let them suggest recovery
-      const errorCtx: ModuleErrorContext = {
-        turnNumber: iterations,
-        lastToolName,
-        iteration: iterations,
-      }
-      for (const module of this.modules) {
+      retryLoop: while (retryCount <= MAX_RETRIES) {
         try {
-          const advice = module.onError?.(engineErr, errorCtx)
-          if (advice?.injectMessage) {
-            messages.push({ role: 'user', content: advice.injectMessage })
+          while (iterations < this.config.maxIterations) {
+            if (turnAbortController.signal.aborted) {
+              result = { stopped: true, reason: 'error', output: finalOutput }
+              break
+            }
+
+            iterations++
+            turnNumber++
+            this.sharedState.setIteration(iterations)
+            this.progressMonitor.tick()
+
+            this.eventEmitter.emit({ type: 'ITERATION_STARTED', iteration: iterations })
+
+            if (this.softAbortRequested) {
+              this.softAbortRequested = false
+              result = { stopped: true, reason: 'interrupted', output: finalOutput }
+              break
+            }
+
+            // Stall detection — drive actual action
+            // ExecutionProfile influences sensitivity: high-effort tasks get more tolerance
+            const stallVerdict = this.progressMonitor.detectStall()
+            // deep/autonomous profiles get tolerance: skip soft-stall to allow complex exploration
+            const isLenientStall =
+              this.currentExecutionProfile === 'deep' ||
+              this.currentExecutionProfile === 'autonomous'
+            if (stallVerdict.kind !== 'progressing') {
+              this.eventEmitter.emit({
+                type: 'STALL_DETECTED',
+                kind: stallVerdict.kind,
+                reason: stallVerdict.reason,
+                action: stallVerdict.action,
+              })
+
+              // Drive actual intervention based on stall kind
+              // High-effort profiles skip soft-stall injections to allow deeper exploration
+              if (
+                stallVerdict.kind === 'hard-stall' ||
+                (stallVerdict.kind === 'soft-stall' && !isLenientStall)
+              ) {
+                const interventionMsg = `[SYSTEM: Stall detected — ${stallVerdict.reason}]\nAction: ${stallVerdict.action}. Please reassess your approach and make meaningful progress.`
+                messages.push({ role: 'user', content: interventionMsg })
+              }
+            }
+
+            await this.evaluateContextBudget(messages)
+
+            for (const module of this.modules) {
+              if (!module.onIteration) continue
+              const iterResult = await module.onIteration({
+                iteration: iterations,
+                messages,
+                abortSignal: turnAbortController.signal,
+                eventLog: this.eventLog,
+              })
+              if (iterResult?.injectMessage) {
+                const msg = iterResult.injectMessage
+                this.renderer.warn(`[${module.name}] ${msg.split('\n')[0]}`)
+                this.eventLog?.append('module_flag', module.name, {
+                  message: msg.slice(0, 500),
+                  iteration: iterations,
+                })
+                messages.push({ role: 'user', content: msg })
+              }
+            }
+
+            // ── Cost budget check ──
+            if (
+              this.config.maxCostUsd !== undefined &&
+              this.costTracker.getTotalCostUSD() >= this.config.maxCostUsd
+            ) {
+              this.renderer.warn(
+                `Cost budget exceeded ($${this.costTracker.getTotalCostUSD().toFixed(4)} >= $${this.config.maxCostUsd.toFixed(2)})`,
+              )
+              this.eventLog?.append('log', 'engine', {
+                event: 'budget_exceeded',
+                currentCost: this.costTracker.getTotalCostUSD(),
+                maxCost: this.config.maxCostUsd,
+                iteration: iterations,
+              })
+              result = { stopped: true, reason: 'budget_exceeded', output: finalOutput }
+              break
+            }
+
+            // ── Streaming LLM call ──
+            const { assistantText, finishReason, rawToolCalls } = await this.callLLM(
+              systemPrompt,
+              messages,
+              exposedTools,
+              turnAbortController.signal,
+            )
+
+            // Usage is already recorded in callLLM via ModelGateway's onUsage callback
+            // Don't record again to avoid double-counting
+
+            this.eventEmitter.emit({
+              type: 'MODEL_COMPLETED',
+              assistantText,
+              finishReason,
+              toolCallCount: rawToolCalls.length,
+            })
+
+            if (assistantText) {
+              // Filter thinking tags before recording as final output
+              finalOutput = this.thinkingFilter.push(assistantText)
+            }
+
+            const assistantMsg: OpenAIMessage = {
+              role: 'assistant',
+              content: assistantText || null,
+              tool_calls:
+                rawToolCalls.length > 0
+                  ? rawToolCalls.map((tc) => ({
+                      id: tc.id,
+                      type: 'function' as const,
+                      function: { name: tc.name, arguments: tc.arguments },
+                    }))
+                  : undefined,
+            }
+            messages.push(assistantMsg)
+
+            if (finishReason === 'stop' || rawToolCalls.length === 0) {
+              // ── Completion Contract check ───────────────────────────────
+              const changedFiles = this.workingState.filesChanged
+              const verificationPassed = this.workingState.verification.failed.length === 0
+              const verdict = evaluateCompletion({
+                taskKind: this.taskIntent.kind,
+                modelStopped: finishReason === 'stop',
+                acceptanceCriteria: this.taskIntent.explicitAcceptanceCriteria,
+                verification: {
+                  executed:
+                    this.workingState.verification.passed.length +
+                      this.workingState.verification.failed.length >
+                    0,
+                  passed: verificationPassed,
+                  failed: this.workingState.verification.failed,
+                },
+                activeWorkers: [],
+                unresolvedBlockers: this.workingState.unresolved,
+                changedFiles,
+                iterationsUsed: iterations,
+                iterationsMax: this.config.maxIterations,
+              })
+
+              if (verdict.status === 'incomplete' && iterations < this.config.maxIterations) {
+                // Task not truly done — inject a continuation prompt
+                const remaining = verdict.remaining.join('; ')
+                const continuationMsg = `[SYSTEM: Task incomplete — ${remaining}]\nPlease continue working toward the task goal. The following items remain unresolved.`
+                messages.push({ role: 'user', content: continuationMsg })
+                this.eventEmitter.emit({
+                  type: 'STALL_DETECTED',
+                  kind: 'soft-stall',
+                  reason: 'task incomplete per completion contract',
+                  action: 'continue',
+                })
+                continue
+              }
+
+              result = {
+                stopped: true,
+                reason: 'stop_sequence',
+                output: finalOutput,
+                completionStatus: verdict.status,
+              }
+              break
+            }
+
+            const parsedCalls: ParsedToolCall[] = rawToolCalls.map((tc) => {
+              let input: Record<string, unknown>
+              let parseError: string | undefined
+              try {
+                input = JSON.parse(tc.arguments || '{}') as Record<string, unknown>
+              } catch (err: unknown) {
+                input = {}
+                parseError = err instanceof Error ? err.message : String(err)
+              }
+              return { tc, input, parseError }
+            })
+
+            if (parsedCalls.length > 0) {
+              lastToolName = parsedCalls[parsedCalls.length - 1].tc.name
+            }
+
+            // Delegate to ToolScheduler (which uses ToolExecutor internally)
+            const { aborted } = await this.toolScheduler.schedule(
+              parsedCalls,
+              toolContext,
+              planMode,
+              turnAbortController,
+              messages,
+              turnNumber,
+            )
+
+            if (aborted || turnAbortController.signal.aborted) {
+              result = { stopped: true, reason: 'error', output: finalOutput }
+              break
+            }
+
+            // Re-sync WorkingState: ToolExecutor creates immutable copies on update,
+            // so Engine's reference must be refreshed after each tool batch.
+            const updatedWs = this.toolExecutor.currentWorkingState
+            if (updatedWs) {
+              this.workingState = updatedWs
+            }
           }
-        } catch {
-          /* best-effort */
+
+          if (result === indecisive) {
+            this.renderer.warn(`Max iterations (${this.config.maxIterations}) reached`)
+            this.eventEmitter.emit({
+              type: 'MAX_ITERATIONS_REACHED',
+              maxIterations: this.config.maxIterations,
+            })
+            result = { stopped: true, reason: 'max_iterations', output: finalOutput }
+          }
+          // Normal exit — break out of retry loop
+          break retryLoop
+        } catch (err: unknown) {
+          // ── Unified error classification + module notification ──
+          const engineErr = classifyEngineError(err)
+          const rawMsg = err instanceof Error ? err.message : String(err)
+
+          this.config.hookRunner?.runOnError?.(engineErr.originalError, {
+            turnNumber: iterations,
+            lastToolName,
+          })
+
+          this.eventLog?.append('error', 'engine', {
+            stage: 'run',
+            turn: iterations,
+            error: engineErr.message,
+            class: engineErr.class,
+            retryAttempt: retryCount,
+            ...(lastToolName ? { lastToolName } : {}),
+          })
+
+          this.eventEmitter.emit({
+            type: 'RUN_FAILED',
+            error: engineErr.message,
+            output: finalOutput,
+          })
+
+          // Call module.onError() for each module — let them suggest recovery
+          const errorCtx: ModuleErrorContext = {
+            turnNumber: iterations,
+            lastToolName,
+            iteration: iterations,
+          }
+          for (const module of this.modules) {
+            try {
+              const advice = module.onError?.(engineErr, errorCtx)
+              if (advice?.injectMessage) {
+                messages.push({ role: 'user', content: advice.injectMessage })
+              }
+            } catch {
+              /* best-effort */
+            }
+          }
+
+          // Apply recovery strategy based on error class
+          if (
+            engineErr.class === 'recoverable' &&
+            engineErr.retryable &&
+            retryCount < MAX_RETRIES
+          ) {
+            retryCount++
+            // Exponential backoff: 2s, 4s, 8s
+            const delayMs = BASE_DELAY_MS * Math.pow(2, retryCount - 1)
+            this.eventLog?.append('log', 'engine', {
+              strategy: 'retry',
+              attempt: retryCount,
+              maxRetries: MAX_RETRIES,
+              delayMs,
+              class: engineErr.class,
+              error: engineErr.message,
+            })
+            this.renderer.warn(
+              `[重试 ${retryCount}/${MAX_RETRIES}] ${rawMsg.slice(0, 120)} — ${delayMs / 1000}s 后重试...`,
+            )
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
+            // Check if aborted during backoff
+            if (turnAbortController.signal.aborted) {
+              result = { stopped: true, reason: 'error', output: finalOutput, error: rawMsg }
+              break retryLoop
+            }
+            // Re-enter the retry loop with preserved conversation state
+            continue retryLoop
+          } else {
+            result = { stopped: true, reason: 'error', output: finalOutput, error: rawMsg }
+            break retryLoop
+          }
         }
-      }
-
-      // Apply recovery strategy based on error class
-      if (engineErr.class === 'recoverable' && engineErr.retryable) {
-        this.eventLog?.append('log', 'engine', {
-          strategy: 'retry_once',
-          class: engineErr.class,
-          error: engineErr.message,
-        })
-      }
-
-      result = { stopped: true, reason: 'error', output: finalOutput, error: rawMsg }
+      } // end retryLoop
     } finally {
       this.currentTurnAbortController = null
     }

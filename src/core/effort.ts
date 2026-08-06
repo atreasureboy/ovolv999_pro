@@ -117,11 +117,17 @@ export function detectExecutionProfile(taskPrompt: string): ExecutionProfile {
   const prompt = taskPrompt.toLowerCase().trim()
   if (!prompt) return 'fast'
 
-  const isComplex = /(architect|refactor|migrat|redesign|multi-file|cross-module|rewrite)/.test(prompt)
+  const isComplex = /(architect|refactor|migrat|redesign|multi-file|cross-module|rewrite)/.test(
+    prompt,
+  )
   if (isComplex) return 'deep'
 
-  const isQuestion = /^(what|how|why|explain|tell|where|is|can|show|list|find|search|grep|status|health)\b/.test(prompt)
-  const isEditAction = /(fix|edit|add|write|modify|create|delete|update|replace|implement|build|remove)/.test(prompt)
+  const isQuestion =
+    /^(what|how|why|explain|tell|where|is|can|show|list|find|search|grep|status|health)\b/.test(
+      prompt,
+    )
+  const isEditAction =
+    /(fix|edit|add|write|modify|create|delete|update|replace|implement|build|remove)/.test(prompt)
 
   if (isQuestion && !isEditAction) return 'fast'
   if (prompt.length < 30 && !isEditAction) return 'fast'

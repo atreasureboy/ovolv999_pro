@@ -108,43 +108,70 @@ export function isValidPermissionMode(value: string): value is PermissionMode {
 
 export function permissionModeLabel(mode: PermissionMode): string {
   switch (mode) {
-    case 'default':           return 'Default'
-    case 'acceptEdits':       return 'Accept Edits'
-    case 'plan':              return 'Plan Mode'
-    case 'auto':              return 'Auto'
-    case 'bypassPermissions': return 'Bypass'
-    case 'dontAsk':           return 'Don\'t Ask'
-    case 'bubble':            return 'Bubble (Sandbox)'
-    case 'ask':               return 'Ask'
-    case 'deny':              return 'Deny'
+    case 'default':
+      return 'Default'
+    case 'acceptEdits':
+      return 'Accept Edits'
+    case 'plan':
+      return 'Plan Mode'
+    case 'auto':
+      return 'Auto'
+    case 'bypassPermissions':
+      return 'Bypass'
+    case 'dontAsk':
+      return "Don't Ask"
+    case 'bubble':
+      return 'Bubble (Sandbox)'
+    case 'ask':
+      return 'Ask'
+    case 'deny':
+      return 'Deny'
   }
 }
 
 export function permissionModeSymbol(mode: PermissionMode): string {
   switch (mode) {
-    case 'default':           return ''
-    case 'acceptEdits':       return '>>'
-    case 'plan':              return '||'
-    case 'auto':              return '>>>'
-    case 'bypassPermissions': return '>>>>'
-    case 'dontAsk':           return '?!'
-    case 'bubble':            return '[][]'
-    case 'ask':               return '>'
-    case 'deny':              return 'X'
+    case 'default':
+      return ''
+    case 'acceptEdits':
+      return '>>'
+    case 'plan':
+      return '||'
+    case 'auto':
+      return '>>>'
+    case 'bypassPermissions':
+      return '>>>>'
+    case 'dontAsk':
+      return '?!'
+    case 'bubble':
+      return '[][]'
+    case 'ask':
+      return '>'
+    case 'deny':
+      return 'X'
   }
 }
 
 export function permissionModeDescription(mode: PermissionMode): string {
   switch (mode) {
-    case 'default':           return 'Ask for dangerous commands, allow safe ones'
-    case 'acceptEdits':       return 'Auto-approve file edits, still gate shell commands'
-    case 'plan':              return 'Read-only analysis (no writes/edits/bash)'
-    case 'auto':              return 'Auto-approve everything except dangerous commands'
-    case 'bypassPermissions': return 'Approve everything (use with caution)'
-    case 'dontAsk':           return 'No prompts: trust the model + hooks only'
-    case 'bubble':            return 'Shell commands run in OS-level sandbox'
-    case 'ask':               return 'Ask for all tool calls'
-    case 'deny':              return 'Deny all tool calls'
+    case 'default':
+      return 'Ask for dangerous commands, allow safe ones'
+    case 'acceptEdits':
+      return 'Auto-approve file edits, still gate shell commands'
+    case 'plan':
+      return 'Read-only analysis (no writes/edits/bash)'
+    case 'auto':
+      return 'Auto-approve everything except dangerous commands'
+    case 'bypassPermissions':
+      return 'Approve everything (use with caution)'
+    case 'dontAsk':
+      return 'No prompts: trust the model + hooks only'
+    case 'bubble':
+      return 'Shell commands run in OS-level sandbox'
+    case 'ask':
+      return 'Ask for all tool calls'
+    case 'deny':
+      return 'Deny all tool calls'
   }
 }
 
@@ -197,9 +224,7 @@ export function matchRule(ruleContent: string, command: string): boolean {
   }
 
   if (ruleContent.includes('*')) {
-    const regexStr = ruleContent
-      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '.*')
+    const regexStr = ruleContent.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
     let finalRegex = regexStr
     const unescapedStarCount = (ruleContent.match(/\*/g) || []).length
     if (finalRegex.endsWith(' .*') && unescapedStarCount === 1) {
@@ -323,7 +348,11 @@ export class PermissionChecker {
 
     if (this.approver) {
       try {
-        const approved = await this.approver({ tool: input.tool, fingerprint: fp, matchedRule: matched })
+        const approved = await this.approver({
+          tool: input.tool,
+          fingerprint: fp,
+          matchedRule: matched,
+        })
         return { allowed: approved, reason: approved ? 'approved by user' : 'denied by user' }
       } catch {
         return { allowed: false, reason: 'denied_by_approver_error' }
@@ -335,8 +364,18 @@ export class PermissionChecker {
 
   private isDangerousCommand(cmd: string): boolean {
     const dangerous = [
-      'rm -rf', 'rm -fr', 'sudo ', 'chmod 777', 'git push --force', 'git push -f',
-      'mkfs', 'dd if=', '> /dev/sd', 'chown ', 'curl ', 'wget ',
+      'rm -rf',
+      'rm -fr',
+      'sudo ',
+      'chmod 777',
+      'git push --force',
+      'git push -f',
+      'mkfs',
+      'dd if=',
+      '> /dev/sd',
+      'chown ',
+      'curl ',
+      'wget ',
       'git commit --amend',
     ]
     const normalized = cmd.replace(/\s+/g, ' ').trim()

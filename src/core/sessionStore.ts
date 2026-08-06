@@ -42,7 +42,7 @@ export class UnknownSessionVersionError extends Error {
   constructor(sessionDir: string, version: number, minSupported: number, maxSupported: number) {
     super(
       `Session at ${sessionDir} uses version ${version}, ` +
-      `but this build supports versions ${minSupported}..${maxSupported}.`,
+        `but this build supports versions ${minSupported}..${maxSupported}.`,
     )
     this.name = 'UnknownSessionVersionError'
     this.version = version
@@ -118,7 +118,12 @@ export function loadConversation(sessionDir: string): ConversationSnapshot | nul
     const version = typeof raw.version === 'number' ? raw.version : 1
 
     if (version < MIN_SUPPORTED_VERSION || version > CURRENT_SESSION_VERSION) {
-      throw new UnknownSessionVersionError(sessionDir, version, MIN_SUPPORTED_VERSION, CURRENT_SESSION_VERSION)
+      throw new UnknownSessionVersionError(
+        sessionDir,
+        version,
+        MIN_SUPPORTED_VERSION,
+        CURRENT_SESSION_VERSION,
+      )
     }
 
     if (version === 1) {

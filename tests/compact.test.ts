@@ -20,13 +20,34 @@ describe('maybeCompact split logic', () => {
 
     // 6 filler messages (to push past KEEP_RECENT_MESSAGES=8)
     for (let i = 0; i < 6; i++) {
-      messages.push({ role: 'user', content: `Filler message ${i} with enough text to be substantial for token estimation purposes.` })
-      messages.push({ role: 'assistant', content: `Response ${i} with enough text to be substantial for token estimation purposes.` })
+      messages.push({
+        role: 'user',
+        content: `Filler message ${i} with enough text to be substantial for token estimation purposes.`,
+      })
+      messages.push({
+        role: 'assistant',
+        content: `Response ${i} with enough text to be substantial for token estimation purposes.`,
+      })
     }
     // assistant with tool_calls
-    messages.push({ role: 'assistant', content: null, tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"test.ts"}' } }] })
+    messages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        {
+          id: 'tc1',
+          type: 'function',
+          function: { name: 'Read', arguments: '{"file_path":"test.ts"}' },
+        },
+      ],
+    })
     // tool results
-    messages.push({ role: 'tool', tool_call_id: 'tc1', content: 'file contents here', name: 'Read' })
+    messages.push({
+      role: 'tool',
+      tool_call_id: 'tc1',
+      content: 'file contents here',
+      name: 'Read',
+    })
     messages.push({ role: 'tool', tool_call_id: 'tc1', content: 'more content', name: 'Read' })
 
     // We can't call maybeCompact without a real LLM client, but we can verify
@@ -36,8 +57,10 @@ describe('maybeCompact split logic', () => {
 
     // Verify the messages array structure is valid for API submission
     // (tool results must follow their assistant tool_calls)
-    const lastAssistantIdx = messages.reduce((last, m, i) =>
-      m.role === 'assistant' && m.tool_calls ? i : last, -1)
+    const lastAssistantIdx = messages.reduce(
+      (last, m, i) => (m.role === 'assistant' && m.tool_calls ? i : last),
+      -1,
+    )
     expect(lastAssistantIdx).toBeGreaterThan(-1)
     // All tool messages must be after the last assistant with tool_calls
     for (let i = 0; i < messages.length; i++) {
@@ -50,7 +73,17 @@ describe('maybeCompact split logic', () => {
   it('estimateTokens counts content, tool_calls, and overhead', () => {
     const messages: OpenAIMessage[] = [
       { role: 'user', content: 'Hello world' },
-      { role: 'assistant', content: null, tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'Bash', arguments: '{"command":"ls"}' } }] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'tc1',
+            type: 'function',
+            function: { name: 'Bash', arguments: '{"command":"ls"}' },
+          },
+        ],
+      },
       { role: 'tool', tool_call_id: 'tc1', content: 'output', name: 'Bash' },
     ]
     const tokens = estimateTokens(messages)

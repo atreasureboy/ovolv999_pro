@@ -49,7 +49,10 @@ describe('PermissionChecker — modes', () => {
 
   it('ask mode prompts via the approver when no rule matches', async () => {
     let asked = false
-    const approver: Approver = () => { asked = true; return Promise.resolve(true) }
+    const approver: Approver = () => {
+      asked = true
+      return Promise.resolve(true)
+    }
     const checker = new PermissionChecker('ask', [], approver)
     const d = await checker.check({ tool: 'Read', input: { file_path: '/a' } })
     expect(asked).toBe(true)
@@ -60,7 +63,10 @@ describe('PermissionChecker — modes', () => {
 describe('PermissionChecker — rules', () => {
   it('default rule escalates rm -rf to ask even in auto mode', async () => {
     let asked = false
-    const approver: Approver = () => { asked = true; return Promise.resolve(false) }
+    const approver: Approver = () => {
+      asked = true
+      return Promise.resolve(false)
+    }
     const checker = new PermissionChecker('auto', [], approver)
     const d = await checker.check({ tool: 'Bash', input: { command: 'rm -rf /tmp/x' } })
     expect(asked).toBe(true)
@@ -69,9 +75,7 @@ describe('PermissionChecker — rules', () => {
   })
 
   it('a consumer allow rule overrides deny mode', async () => {
-    const checker = new PermissionChecker('deny', [
-      { tool: 'Read', action: 'allow' },
-    ])
+    const checker = new PermissionChecker('deny', [{ tool: 'Read', action: 'allow' }])
     const d = await checker.check({ tool: 'Read', input: { file_path: '/a' } })
     expect(d.allowed).toBe(true)
   })
@@ -93,9 +97,11 @@ describe('PermissionChecker — rules', () => {
   it('first matching rule wins (consumer rule before default)', async () => {
     // Consumer explicitly allows curl; the default rule would escalate to ask.
     const approver: Approver = () => Promise.resolve(true)
-    const checker = new PermissionChecker('auto', [
-      { tool: 'Bash', pattern: 'curl ', action: 'allow' },
-    ], approver)
+    const checker = new PermissionChecker(
+      'auto',
+      [{ tool: 'Bash', pattern: 'curl ', action: 'allow' }],
+      approver,
+    )
     const d = await checker.check({ tool: 'Bash', input: { command: 'curl http://x' } })
     expect(d.allowed).toBe(true)
   })
@@ -108,7 +114,7 @@ describe('PermissionChecker — rules', () => {
   })
 
   it('default rules include common destructive patterns', () => {
-    const patterns = DEFAULT_PERMISSION_RULES.map(r => r.pattern)
+    const patterns = DEFAULT_PERMISSION_RULES.map((r) => r.pattern)
     expect(patterns).toContain('rm -rf')
     expect(patterns).toContain('sudo ')
     expect(patterns).toContain('git push --force')

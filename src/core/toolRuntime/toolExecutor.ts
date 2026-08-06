@@ -10,6 +10,7 @@ import type { AgentModule } from '../module.js'
 import type { WorkingState } from '../workingState.js'
 import { recordFileRead, recordFileChange, recordVerification } from '../workingState.js'
 import { classifyCommandRisk } from '../riskClassifier.js'
+import { validatePathInputs } from '../pathSecurity.js'
 
 export interface ParsedToolCall {
   tc: { id: string; name: string; arguments: string }
@@ -27,7 +28,8 @@ export interface VerificationDetector {
 
 /** Default verification detector — detects common test/lint commands in Bash. */
 export class DefaultVerificationDetector implements VerificationDetector {
-  private readonly pattern = /\b(tsc|eslint|prettier --check|vitest|jest|pytest|cargo test|go test|npm test|npm run test|make test)\b/
+  private readonly pattern =
+    /\b(tsc|eslint|prettier --check|vitest|jest|pytest|cargo test|go test|npm test|npm run test|make test)\b/
 
   isVerification(toolName: string, input: Record<string, unknown>): boolean {
     if (toolName !== 'Bash') return false
@@ -93,6 +95,16 @@ export class ToolExecutor {
       return result
     }
 
+    // ── Engine-level path security enforcement (defense-in-depth) ──
+    // Even if individual tools implement their own path checks, the executor
+    // validates known path fields centrally so no tool can skip validation.
+    const pathError = validatePathInputs(input, context.cwd)
+    if (pathError) {
+      const result: ToolResult = { content: pathError, isError: true }
+      eventEmitter?.emit({ type: 'TOOL_COMPLETED', callId, toolName, result })
+      return result
+    }
+
     // Classify risk for Bash commands
     if (toolName === 'Bash' && typeof input.command === 'string') {
       const riskLevel = classifyCommandRisk(input.command)
@@ -129,7 +141,10 @@ export class ToolExecutor {
         const advice = module.onBeforeToolCall?.(toolName, input)
         if (advice) {
           if (advice.action === 'deny') {
-            const result: ToolResult = { content: `Tool "${toolName}" blocked by module: ${advice.reason}`, isError: true }
+            const result: ToolResult = {
+              content: `Tool "${toolName}" blocked by module: ${advice.reason}`,
+              isError: true,
+            }
             eventEmitter?.emit({ type: 'TOOL_COMPLETED', callId, toolName, result })
             return result
           }

@@ -30,17 +30,17 @@ export interface ToolCall {
  * Minimal surface a child engine needs to expose to AgentTool.
  */
 export interface ChildEngineLike {
-  runTurn: (msg: string, history: never[]) => Promise<{
+  runTurn: (
+    msg: string,
+    history: never[],
+  ) => Promise<{
     result: { output: string; reason: string; completionStatus?: string }
   }>
   abort: () => void
   dispose?: () => void
 }
 
-export type AgentChildEngineFactory = (
-  config: EngineConfig,
-  renderer: unknown,
-) => ChildEngineLike
+export type AgentChildEngineFactory = (config: EngineConfig, renderer: unknown) => ChildEngineLike
 
 /** Content part for multimodal messages (vision/image support). */
 export interface ContentPart {
@@ -223,6 +223,8 @@ export interface EngineConfig {
   provider?: ProviderId
   /** 任务意图（自动分类或用户指定） */
   taskIntent?: TaskIntent
+  /** Maximum USD cost before the agent stops (checked before each LLM call) */
+  maxCostUsd?: number
 }
 
 /** Cumulative token usage across one or more turns, for cost observability. */
@@ -236,7 +238,7 @@ export interface TokenUsage {
 
 export interface TurnResult {
   stopped: boolean
-  reason: 'max_iterations' | 'stop_sequence' | 'error' | 'interrupted'
+  reason: 'max_iterations' | 'stop_sequence' | 'error' | 'interrupted' | 'budget_exceeded'
   output: string
   error?: string
   /** Completion contract status — null when not evaluated */

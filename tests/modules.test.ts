@@ -35,45 +35,111 @@ describe('SemanticMemory', () => {
   })
 
   it('deduplicates by content hash', async () => {
-    await mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
-    await mem.write({ content: 'Use tabs not spaces', tags: [], source: 'user_stated', confidence: 0.8, timestamp: '' })
+    await mem.write({
+      content: 'Use tabs not spaces',
+      tags: [],
+      source: 'user_stated',
+      confidence: 0.9,
+      timestamp: '',
+    })
+    await mem.write({
+      content: 'Use tabs not spaces',
+      tags: [],
+      source: 'user_stated',
+      confidence: 0.8,
+      timestamp: '',
+    })
     expect(await mem.readAll()).toHaveLength(1)
     // Higher confidence wins
     expect((await mem.readAll())[0].confidence).toBe(0.9)
   })
 
   it('source priority: user_stated overrides agent_inferred', async () => {
-    await mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'agent_inferred', confidence: 0.9, timestamp: '' })
-    await mem.write({ content: 'Deploy on Fridays is fine', tags: [], source: 'tool_observed', confidence: 1.0, timestamp: '' })
+    await mem.write({
+      content: 'Deploy on Fridays is fine',
+      tags: [],
+      source: 'agent_inferred',
+      confidence: 0.9,
+      timestamp: '',
+    })
+    await mem.write({
+      content: 'Deploy on Fridays is fine',
+      tags: [],
+      source: 'tool_observed',
+      confidence: 1.0,
+      timestamp: '',
+    })
     expect(await mem.readAll()).toHaveLength(1)
     expect((await mem.readAll())[0].source).toBe('agent_inferred')
   })
 
   it('source priority: user_stated overrides existing agent_inferred', async () => {
-    await mem.write({ content: 'Use pnpm', tags: [], source: 'agent_inferred', confidence: 0.5, timestamp: '' })
-    await mem.write({ content: 'Use pnpm', tags: [], source: 'user_stated', confidence: 0.9, timestamp: '' })
+    await mem.write({
+      content: 'Use pnpm',
+      tags: [],
+      source: 'agent_inferred',
+      confidence: 0.5,
+      timestamp: '',
+    })
+    await mem.write({
+      content: 'Use pnpm',
+      tags: [],
+      source: 'user_stated',
+      confidence: 0.9,
+      timestamp: '',
+    })
     expect(await mem.readAll()).toHaveLength(1)
     expect((await mem.readAll())[0].source).toBe('user_stated')
   })
 
   it('searches by keywords', async () => {
-    await mem.write({ content: 'TypeScript strict mode is recommended', tags: ['ts'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
-    await mem.write({ content: 'Use ESLint for linting', tags: ['lint'], source: 'agent_inferred', confidence: 0.7, timestamp: '' })
+    await mem.write({
+      content: 'TypeScript strict mode is recommended',
+      tags: ['ts'],
+      source: 'agent_inferred',
+      confidence: 0.8,
+      timestamp: '',
+    })
+    await mem.write({
+      content: 'Use ESLint for linting',
+      tags: ['lint'],
+      source: 'agent_inferred',
+      confidence: 0.7,
+      timestamp: '',
+    })
     const results = await mem.search({ keywords: ['typescript'] })
     expect(results).toHaveLength(1)
     expect(results[0].content).toContain('TypeScript')
   })
 
   it('searches by tags', async () => {
-    await mem.write({ content: 'entry1', tags: ['security'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
-    await mem.write({ content: 'entry2', tags: ['performance'], source: 'agent_inferred', confidence: 0.8, timestamp: '' })
+    await mem.write({
+      content: 'entry1',
+      tags: ['security'],
+      source: 'agent_inferred',
+      confidence: 0.8,
+      timestamp: '',
+    })
+    await mem.write({
+      content: 'entry2',
+      tags: ['performance'],
+      source: 'agent_inferred',
+      confidence: 0.8,
+      timestamp: '',
+    })
     const results = await mem.search({ tags: ['security'] })
     expect(results).toHaveLength(1)
     expect(results[0].tags).toContain('security')
   })
 
   it('persists to disk and reloads', async () => {
-    await mem.write({ content: 'persisted entry', tags: ['test'], source: 'user_stated', confidence: 0.9, timestamp: '' })
+    await mem.write({
+      content: 'persisted entry',
+      tags: ['test'],
+      source: 'user_stated',
+      confidence: 0.9,
+      timestamp: '',
+    })
     const mem2 = new SemanticMemory(tmpDir)
     expect(await mem2.readAll()).toHaveLength(1)
     expect((await mem2.readAll())[0].content).toBe('persisted entry')
@@ -97,23 +163,65 @@ describe('EpisodicMemory', () => {
   })
 
   it('writes and reads episodes', () => {
-    mem.write({ turn: 1, toolName: 'Bash', inputSummary: 'ls', resultSummary: 'file1.ts', outcome: 'success', timestamp: '' })
-    mem.write({ turn: 2, toolName: 'Read', inputSummary: 'file1.ts', resultSummary: 'contents', outcome: 'success', timestamp: '' })
+    mem.write({
+      turn: 1,
+      toolName: 'Bash',
+      inputSummary: 'ls',
+      resultSummary: 'file1.ts',
+      outcome: 'success',
+      timestamp: '',
+    })
+    mem.write({
+      turn: 2,
+      toolName: 'Read',
+      inputSummary: 'file1.ts',
+      resultSummary: 'contents',
+      outcome: 'success',
+      timestamp: '',
+    })
     const recent = mem.recent(10)
     expect(recent).toHaveLength(2)
   })
 
   it('filters by tool name', () => {
-    mem.write({ turn: 1, toolName: 'Bash', inputSummary: '', resultSummary: '', outcome: 'success', timestamp: '' })
-    mem.write({ turn: 2, toolName: 'Read', inputSummary: '', resultSummary: '', outcome: 'success', timestamp: '' })
-    mem.write({ turn: 3, toolName: 'Bash', inputSummary: '', resultSummary: '', outcome: 'failure', timestamp: '' })
+    mem.write({
+      turn: 1,
+      toolName: 'Bash',
+      inputSummary: '',
+      resultSummary: '',
+      outcome: 'success',
+      timestamp: '',
+    })
+    mem.write({
+      turn: 2,
+      toolName: 'Read',
+      inputSummary: '',
+      resultSummary: '',
+      outcome: 'success',
+      timestamp: '',
+    })
+    mem.write({
+      turn: 3,
+      toolName: 'Bash',
+      inputSummary: '',
+      resultSummary: '',
+      outcome: 'failure',
+      timestamp: '',
+    })
     const bashOnly = mem.findByTool('Bash')
     expect(bashOnly).toHaveLength(2)
   })
 
   it('returns limited recent episodes', () => {
     for (let i = 0; i < 20; i++) {
-      mem.write({ turn: i, toolName: 'Bash', inputSummary: '', resultSummary: '', outcome: 'success', timestamp: '' })
+      mem.write({
+        turn: i,
+        toolName: 'Bash',
+        inputSummary: '',
+        resultSummary: '',
+        outcome: 'success',
+        timestamp: '',
+      })
     }
     expect(mem.recent(5)).toHaveLength(5)
   })

@@ -69,7 +69,7 @@ describe('listSessions', () => {
     const list = listSessions(workDir)
     expect(list).toHaveLength(2)
     expect(list[0].dir).toBe(newer)
-    expect(list.map(s => s.name)).toEqual(['session_2', 'session_1'])
+    expect(list.map((s) => s.name)).toEqual(['session_2', 'session_1'])
   })
 
   it('returns [] when no sessions dir exists', () => {

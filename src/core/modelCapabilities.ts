@@ -77,12 +77,12 @@ const KNOWN_MODEL_MAP: Record<string, ProviderId> = {
   'mixtral-8x7b': 'openrouter',
   'mixtral-8x22b': 'openrouter',
   // Specific OpenAI reasoning models
-  'o1': 'openai',
+  o1: 'openai',
   'o1-mini': 'openai',
   'o1-preview': 'openai',
-  'o3': 'openai',
+  o3: 'openai',
   'o3-mini': 'openai',
-  'o4': 'openai',
+  o4: 'openai',
   'o4-mini': 'openai',
   // DeepSeek reasoning models
   'deepseek-r1': 'deepseek',
@@ -98,7 +98,13 @@ export function detectProvider(model: string): ProviderId {
   }
 
   // Prefix-based detection
-  if (lower.startsWith('gpt') || lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) return 'openai'
+  if (
+    lower.startsWith('gpt') ||
+    lower.startsWith('o1') ||
+    lower.startsWith('o3') ||
+    lower.startsWith('o4')
+  )
+    return 'openai'
   if (lower.startsWith('claude')) return 'anthropic'
   if (lower.startsWith('gemini')) return 'google'
   if (lower.startsWith('grok')) return 'xai'
@@ -128,10 +134,7 @@ export function supportsReasoningTokens(model: string): boolean {
  *   Extend `KNOWN_MODEL_MAP` for newly-released models that need precise
  *   provider assignment.
  */
-export function capabilitiesForModel(
-  model: string,
-  contextWindow?: number,
-): ModelCapabilities {
+export function capabilitiesForModel(model: string, contextWindow?: number): ModelCapabilities {
   const provider = detectProvider(model)
   const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.unknown
   const ctx = contextWindow ?? 128_000
@@ -152,10 +155,7 @@ export function effectiveInputBudget(
   caps: ModelCapabilities,
   opts: { reserveForOutput?: number; reserveForWorkingState?: number } = {},
 ): number {
-  const reserveForOutput = Math.min(
-    opts.reserveForOutput ?? caps.maxOutput,
-    caps.maxOutput,
-  )
+  const reserveForOutput = Math.min(opts.reserveForOutput ?? caps.maxOutput, caps.maxOutput)
   const reserveForState = opts.reserveForWorkingState ?? 0
   return Math.max(0, caps.maxContext - reserveForOutput - reserveForState)
 }

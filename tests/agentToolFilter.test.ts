@@ -1,14 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import {
-  filterToolsForSubAgent,
-  SUB_AGENT_DISALLOWED_TOOLS,
-} from '../src/core/agentToolFilter.js'
+import { filterToolsForSubAgent, SUB_AGENT_DISALLOWED_TOOLS } from '../src/core/agentToolFilter.js'
 
 describe('filterToolsForSubAgent', () => {
   const ALL_TOOLS = [
-    'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash',
-    'Agent', 'EnterPlanMode', 'ExitPlanMode', 'WebFetch',
-    'mcp__myServer', 'mcp__otherServer',
+    'Read',
+    'Write',
+    'Edit',
+    'Glob',
+    'Grep',
+    'Bash',
+    'Agent',
+    'EnterPlanMode',
+    'ExitPlanMode',
+    'WebFetch',
+    'mcp__myServer',
+    'mcp__otherServer',
   ]
 
   it('removes globally disallowed tools', () => {
@@ -38,11 +44,10 @@ describe('filterToolsForSubAgent', () => {
   })
 
   it('applies denylist after global disallowed and allowlist', () => {
-    const result = filterToolsForSubAgent(
-      ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch'],
-      undefined,
-      ['Bash', 'WebFetch'],
-    )
+    const result = filterToolsForSubAgent(['Read', 'Glob', 'Grep', 'Bash', 'WebFetch'], undefined, [
+      'Bash',
+      'WebFetch',
+    ])
     expect(result).toContain('Read')
     expect(result).toContain('Glob')
     expect(result).toContain('Grep')
@@ -51,11 +56,7 @@ describe('filterToolsForSubAgent', () => {
   })
 
   it('applies allowlist then denylist', () => {
-    const result = filterToolsForSubAgent(
-      ALL_TOOLS,
-      ['Read', 'Bash'],
-      ['Bash'],
-    )
+    const result = filterToolsForSubAgent(ALL_TOOLS, ['Read', 'Bash'], ['Bash'])
     expect(result).toContain('Read')
     expect(result).not.toContain('Bash')
   })

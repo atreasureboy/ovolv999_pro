@@ -16,14 +16,14 @@ export class MyTool implements Tool {
   description = '这个工具做什么 — 一句话描述'
 
   // ── 分类（引擎据此自动决策过滤、并发分区、权限等） ──
-  category: Tool['category'] = 'readonly'    // readonly | mutation | system | external | delegation
-  riskLevel: Tool['riskLevel'] = 'safe'       // safe | needs_approval | dangerous
-  concurrencySafe = true                       // 能否与其他 safe 工具并行执行
-  longRunning = false                          // 是否可能超时
+  category: Tool['category'] = 'readonly' // readonly | mutation | system | external | delegation
+  riskLevel: Tool['riskLevel'] = 'safe' // safe | needs_approval | dangerous
+  concurrencySafe = true // 能否与其他 safe 工具并行执行
+  longRunning = false // 是否可能超时
 
   // ── 声明（引擎据此自动过滤，无需外部常量） ──
-  planModeAllowed = true                       // plan mode 下是否可用
-  informationalAllowed = true                  // informational 任务能否使用
+  planModeAllowed = true // plan mode 下是否可用
+  informationalAllowed = true // informational 任务能否使用
 
   definition: ToolDefinition = {
     type: 'function',

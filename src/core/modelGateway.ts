@@ -61,7 +61,10 @@ export interface StreamResult {
 export type ModelGatewayResult = StreamResult & { attempts: ProviderAttempt[] }
 
 export class ModelGatewayError extends Error {
-  constructor(message: string, public readonly attempts: ProviderAttempt[]) {
+  constructor(
+    message: string,
+    public readonly attempts: ProviderAttempt[],
+  ) {
     super(message)
     this.name = 'ModelGatewayError'
   }
@@ -112,7 +115,16 @@ export class ModelGateway {
     params: ModelCallParams,
     callbacks?: ModelGatewayCallbacks,
   ): Promise<ModelGatewayResult> {
-    const { systemPrompt, messages, toolDefs, model, temperature, maxOutputTokens, abortSignal, turnAbortController } = params
+    const {
+      systemPrompt,
+      messages,
+      toolDefs,
+      model,
+      temperature,
+      maxOutputTokens,
+      abortSignal,
+      turnAbortController,
+    } = params
 
     // Select the appropriate adapter for this model
     this.activeAdapter = this.selectAdapter(model)
@@ -160,7 +172,8 @@ export class ModelGateway {
         try {
           stream = await this.activeAdapter.stream(makeStreamReq(model))
         } catch (retryCaught) {
-          const retryError = retryCaught instanceof Error ? retryCaught : new Error(String(retryCaught))
+          const retryError =
+            retryCaught instanceof Error ? retryCaught : new Error(String(retryCaught))
           attempts.push({
             model,
             provider: this.activeAdapter.providerId,
@@ -189,7 +202,8 @@ export class ModelGateway {
         try {
           stream = await this.activeAdapter.stream(makeStreamReq(fallbackModel))
         } catch (fallbackCaught) {
-          const fallbackError = fallbackCaught instanceof Error ? fallbackCaught : new Error(String(fallbackCaught))
+          const fallbackError =
+            fallbackCaught instanceof Error ? fallbackCaught : new Error(String(fallbackCaught))
           attempts.push({
             model: fallbackModel,
             provider: this.activeAdapter.providerId,
@@ -210,7 +224,8 @@ export class ModelGateway {
     try {
       result = await this.consumeStream(stream, abortSignal, turnAbortController)
     } catch (consumeCaught) {
-      const consumeError = consumeCaught instanceof Error ? consumeCaught : new Error(String(consumeCaught))
+      const consumeError =
+        consumeCaught instanceof Error ? consumeCaught : new Error(String(consumeCaught))
       attempts.push({
         model: activeModel,
         provider: this.activeAdapter.providerId,
