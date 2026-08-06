@@ -5,7 +5,7 @@
  * (generated files, logs, reports) to an isolated per-session directory.
  */
 
-import type { AgentModule, ModuleBootContext, ModuleBootResult } from '../core/module.js'
+import type { AgentModule, ModuleBootContext, ModuleBootResult, ModuleDescription } from '../core/module.js'
 
 export class WorkspaceModule implements AgentModule {
   readonly name = 'workspace'
@@ -16,6 +16,14 @@ export class WorkspaceModule implements AgentModule {
     const sessionDir = this.sessionDir ?? ctx.sessionDir
     return {
       toolContextPatch: sessionDir ? { sessionDir } : {},
+    }
+  }
+
+  describe(): ModuleDescription {
+    return {
+      name: this.name,
+      capabilities: ['session-workspace', 'artifact-storage'],
+      version: '1.0.0',
     }
   }
 }

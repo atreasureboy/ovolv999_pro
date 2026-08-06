@@ -17,6 +17,12 @@ export interface WriteFileInput {
 
 export class FileWriteTool implements Tool {
   name = 'Write'
+  description = 'Write or overwrite a file'
+  category = 'mutation' as const
+  riskLevel = 'safe' as const
+  concurrencySafe = false
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',
@@ -67,6 +73,8 @@ export class FileWriteTool implements Tool {
       return {
         content: `File written: ${file_path} (${lines} lines, ${content.length} bytes)`,
         isError: false,
+        bytesWritten: content.length,
+        linesChanged: lines,
       }
     } catch (err: unknown) {
       const error = err as NodeJS.ErrnoException

@@ -27,6 +27,12 @@ interface SkillEntry {
 export function createLoadSkillTool(skills: Map<string, SkillEntry>): Tool {
   return {
     name: 'load_skill',
+    description: 'Load a skill\'s full prompt by name',
+    category: 'system' as const,
+    riskLevel: 'safe' as const,
+    concurrencySafe: true,
+    planModeAllowed: true,
+    informationalAllowed: true,
     definition: {
       type: 'function',
       function: {
@@ -64,7 +70,13 @@ Available skills can be found in the system prompt's skill index section. Each s
       }
 
       // Permission check: skill.tools must be subset of agent's available tools
-      if (skill.tools && skill.tools.length > 0 && context.availableToolNames) {
+      if (skill.tools && skill.tools.length > 0) {
+        if (!context.availableToolNames) {
+          return Promise.resolve({
+            content: `Skill "${skillName}" requires tools [${skill.tools.join(', ')}], but this agent has no tool whitelist configured.`,
+            isError: true,
+          })
+        }
         const available = new Set(context.availableToolNames)
         const missing = skill.tools.filter((t) => !available.has(t))
         if (missing.length > 0) {

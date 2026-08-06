@@ -22,7 +22,12 @@ export interface GrepInput {
 
 export class GrepTool implements Tool {
   name = 'Grep'
+  description = 'Search file contents with regex'
+  category = 'readonly' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',

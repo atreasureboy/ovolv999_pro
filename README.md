@@ -1,17 +1,37 @@
-# ovolv999 — Agent 基座
+# ovolv999 — Agent Harness
 
 <div align="center">
 
-**统一 Harness · 模块化能力 · 流式引擎 · 并发调度 · 配置驱动角色 · MCP 扩展 · 权限闸门**
+**Unified Harness · Modular Capabilities · Streaming Engine · Concurrent Scheduling · Config-Driven Roles · MCP Extensions · Permission Gate**
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D20-339933?logo=node.js)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/Tests-127%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/Tests-327%20passed-brightgreen)]()
 
-> `ovolv999 "任何你需要它完成的任务"`
+> `ovolv999 "anything you need it to do"`
 
 </div>
+
+## Architecture Overview
+
+ovolv999 is a **pure agent harness framework** inspired by Claude Code and AgentOS. All agents share a single runtime (ExecutionEngine) and differentiate through module composition — there is no `agent_type` enum. Roles are configurations of `AgentConfig` (identity + modules + tools).
+
+**Domain-neutral by default**: the core harness makes no coding-assistant assumptions. File tools (Read/Write/Edit/Glob/Grep) are registered but the system prompt, identity, and working principles are domain-agnostic. To use it as a coding agent, layer a coding identity via `AgentConfig.identity` or `OVOGO.md`.
+
+### Key subsystems
+
+| Subsystem | Purpose |
+|-----------|---------|
+| **ModelGateway** | Multi-provider LLM abstraction (OpenAI, Anthropic, OpenRouter-compatible). Auto-detects provider from model name, supports fallback |
+| **ToolScheduler** | Partitions tool calls into parallel (safe) / serial (stateful) batches with resource-claim conflict detection |
+| **ToolExecutor** | Single-tool execution with permission gate, risk classification, hook runner, and working-state tracking |
+| **ContextManager** | Token budget with percentage thresholds (70% warn / 85% compact), preserves tool-call pairs |
+| **WorkingState** | Structured task state (objective, constraints, facts, decisions, file ops, verification) with compaction invariants |
+| **CompletionContract** | 7-status completion verification — prevents premature termination |
+| **ThinkingTagFilter** | Streaming `<think>` tag filter for models that emit reasoning tokens |
+| **ProgressMonitor** | Stall detection with execution-profile-sensitive sensitivity |
+| **ResourceScheduler** | Tool claim conflict prevention for concurrent operations |
 
 ## 简介
 

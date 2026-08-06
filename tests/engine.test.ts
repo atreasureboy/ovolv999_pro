@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { partitionToolCalls } from '../src/core/toolRuntime/toolScheduler.js'
+import type { Tool } from '../src/core/types.js'
 import {
   calculateContextState,
   estimateTokens,
@@ -20,6 +21,28 @@ function makeParsedToolCall(
   }
 }
 
+/** Create a minimal tool stub for scheduler tests. */
+function makeTool(name: string, concurrencySafe: boolean): Tool {
+  return {
+    name,
+    description: `Test tool: ${name}`,
+    category: concurrencySafe ? 'readonly' : 'mutation',
+    riskLevel: 'safe',
+    concurrencySafe,
+    planModeAllowed: true,
+    informationalAllowed: true,
+    definition: {
+      type: 'function',
+      function: {
+        name,
+        description: `Test tool: ${name}`,
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    execute: async () => ({ content: 'ok', isError: false }),
+  }
+}
+
 describe('partitionToolCalls', () => {
   it('groups safe tools into a single parallel batch', () => {
     const calls = [
@@ -27,8 +50,9 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('Glob', { pattern: '*.ts' }),
       makeParsedToolCall('Grep', { pattern: 'foo' }),
     ]
+    const tools = [makeTool('Read', true), makeTool('Glob', true), makeTool('Grep', true)]
 
-    const batches = partitionToolCalls(calls)
+    const batches = partitionToolCalls(calls, tools)
     expect(batches).toHaveLength(1)
     expect(batches[0].safe).toBe(true)
     expect(batches[0].calls).toHaveLength(3)
@@ -40,8 +64,9 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('Write', { file_path: 'b.ts', content: 'hello' }),
       makeParsedToolCall('Glob', { pattern: '*.ts' }),
     ]
+    const tools = [makeTool('Read', true), makeTool('Write', false), makeTool('Glob', true)]
 
-    const batches = partitionToolCalls(calls)
+    const batches = partitionToolCalls(calls, tools)
     // Read is safe (batch 1), Write is unsafe (batch 2), Glob is safe but
     // follows unsafe so it starts a new batch (batch 3)
     expect(batches).toHaveLength(3)
@@ -56,8 +81,9 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('Glob', { pattern: '*.ts' }),
       makeParsedToolCall('WebFetch', { url: 'http://example.com' }),
     ]
+    const tools = [makeTool('Read', true), makeTool('Glob', true), makeTool('WebFetch', true)]
 
-    const batches = partitionToolCalls(calls)
+    const batches = partitionToolCalls(calls, tools)
     expect(batches).toHaveLength(1)
     expect(batches[0].safe).toBe(true)
   })
@@ -72,8 +98,9 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('Read', { file_path: 'a.ts' }),
       makeParsedToolCall('Bash', { command: 'ls' }),
     ]
+    const tools = [makeTool('Read', true), makeTool('Bash', true)]
 
-    const batches = partitionToolCalls(calls)
+    const batches = partitionToolCalls(calls, tools)
     expect(batches).toHaveLength(1)
     expect(batches[0].safe).toBe(true)
   })
@@ -85,29 +112,23 @@ describe('partitionToolCalls', () => {
       makeParsedToolCall('Read', { file_path: 'b.ts' }),
       makeParsedToolCall('Edit', { file_path: 'b.ts', old_string: 'x', new_string: 'y' }),
     ]
+    const tools = [makeTool('Read', true), makeTool('Edit', false)]
 
-    const batches = partitionToolCalls(calls)
+    const batches = partitionToolCalls(calls, tools)
     // Read(safe) → Edit(unsafe) → Read(safe) → Edit(unsafe)
     expect(batches).toHaveLength(4)
   })
 
-  it('honours a caller-provided concurrency-safe set (custom tools)', () => {
-    // P2-7: the engine builds the safe set from each tool's concurrencySafe
-    // self-declaration, so a custom tool not in the hardcoded list can still be
-    // scheduled in a parallel batch.
+  it('honours tool concurrencySafe self-declaration (custom tools)', () => {
+    // P2-7: the scheduler uses each tool's concurrencySafe field —
+    // custom tools not in any hardcoded list can still be parallelized.
     const calls = [
       makeParsedToolCall('MySafeA', {}),
       makeParsedToolCall('MySafeB', {}),
       makeParsedToolCall('MyUnsafe', {}),
     ]
-    // partitionToolCalls now accepts Tool[] and uses metadata.claims for parallelization
-    // For this test, we pass tools with claims to enable parallel batching
-    const mockTools = [
-      { name: 'MySafeA', metadata: { claims: () => [{ type: 'file', key: 'a', access: 'read' as const }] } },
-      { name: 'MySafeB', metadata: { claims: () => [{ type: 'file', key: 'b', access: 'read' as const }] } },
-      { name: 'MyUnsafe' },
-    ] as any[]
-    const batches = partitionToolCalls(calls, mockTools)
+    const tools = [makeTool('MySafeA', true), makeTool('MySafeB', true), makeTool('MyUnsafe', false)]
+    const batches = partitionToolCalls(calls, tools)
     // MySafeA + MySafeB merge into one parallel batch; MyUnsafe is serial
     expect(batches).toHaveLength(2)
     expect(batches[0].safe).toBe(true)
@@ -244,14 +265,20 @@ describe('parseCriticOutput', () => {
     expect(parseCriticOutput('')).toBeNull()
   })
 
-  it('returns the output for non-OK responses', () => {
+  it('returns structured issues for non-OK responses', () => {
     const output = '[问题] 重复劳动\n[纠正] 换个策略'
-    expect(parseCriticOutput(output)).toBe(output)
+    const result = parseCriticOutput(output)
+    expect(result).toEqual([
+      { problem: '重复劳动', correction: '换个策略' },
+    ])
   })
 
-  it('trims whitespace from response', () => {
+  it('falls back to raw mode when structured markers are absent', () => {
     const output = '[问题] something'
-    expect(parseCriticOutput('  ' + output + '  ')).toBe(output)
+    const result = parseCriticOutput('  ' + output + '  ')
+    expect(result).toEqual([
+      { problem: '[问题] something', correction: '' },
+    ])
   })
 })
 

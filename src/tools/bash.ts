@@ -41,7 +41,12 @@ function truncateOutput(output: string, maxLen: number): string {
 
 export class BashTool implements Tool {
   name = 'Bash'
+  description = 'Execute shell commands'
+  category = 'mutation' as const
+  riskLevel = 'needs_approval' as const
   concurrencySafe = true
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',
@@ -240,6 +245,9 @@ export class BashTool implements Tool {
             resolve({
               content: truncateOutput(prefix + combined, MAX_OUTPUT_LENGTH) || '(no output)',
               isError: false,
+              exitCode: 0,
+              stdout: stdout || '',
+              stderr: stderr || '',
             })
             return
           }
@@ -272,6 +280,9 @@ export class BashTool implements Tool {
               MAX_OUTPUT_LENGTH,
             ).trimEnd(),
             isError: false, // non-zero exit is not necessarily fatal
+            exitCode,
+            stdout: stdout || '',
+            stderr: stderr || '',
           })
         },
       )

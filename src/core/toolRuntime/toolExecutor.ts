@@ -7,12 +7,38 @@ import type { ContextManager } from '../context/contextManager.js'
 import type { RunEventEmitter } from '../runtime/events.js'
 import type { ProgressMonitor } from '../runtime/progressMonitor.js'
 import type { AgentModule } from '../module.js'
+import type { WorkingState } from '../workingState.js'
+import { recordFileRead, recordFileChange, recordVerification } from '../workingState.js'
 import { classifyCommandRisk } from '../riskClassifier.js'
 
 export interface ParsedToolCall {
   tc: { id: string; name: string; arguments: string }
   input: Record<string, unknown>
   parseError?: string
+}
+
+/** Strategy for detecting verification commands (e.g. test/lint/typecheck runs). */
+export interface VerificationDetector {
+  /** Returns true if the given tool call is performing verification. */
+  isVerification(toolName: string, input: Record<string, unknown>): boolean
+  /** Provided verification description extracted from the input. */
+  describe(toolName: string, input: Record<string, unknown>): string
+}
+
+/** Default verification detector — detects common test/lint commands in Bash. */
+export class DefaultVerificationDetector implements VerificationDetector {
+  private readonly pattern = /\b(tsc|eslint|prettier --check|vitest|jest|pytest|cargo test|go test|npm test|npm run test|make test)\b/
+
+  isVerification(toolName: string, input: Record<string, unknown>): boolean {
+    if (toolName !== 'Bash') return false
+    const cmd = typeof input.command === 'string' ? input.command : ''
+    return this.pattern.test(cmd)
+  }
+
+  describe(_toolName: string, input: Record<string, unknown>): string {
+    const cmd = typeof input.command === 'string' ? input.command : ''
+    return cmd.slice(0, 80)
+  }
 }
 
 export interface ToolExecutorDeps {
@@ -25,6 +51,9 @@ export interface ToolExecutorDeps {
   progressMonitor?: ProgressMonitor
   renderer: Renderer
   modules?: AgentModule[]
+  workingState?: WorkingState
+  /** Custom verification detector — defaults to DefaultVerificationDetector */
+  verificationDetector?: VerificationDetector
 }
 
 export class ToolExecutor {
@@ -32,6 +61,11 @@ export class ToolExecutor {
 
   constructor(deps: ToolExecutorDeps) {
     this.deps = deps
+  }
+
+  /** Expose current workingState for re-sync by Engine after tool execution. */
+  get currentWorkingState(): import('../workingState.js').WorkingState | undefined {
+    return this.deps.workingState
   }
 
   async execute(
@@ -118,6 +152,47 @@ export class ToolExecutor {
 
     eventEmitter?.emit({ type: 'TOOL_COMPLETED', callId, toolName, result })
 
+    // ── Update WorkingState based on tool type ───────────────────────
+    if (this.deps.workingState && !result.isError) {
+      this.deps.workingState = updateWorkingState(
+        this.deps.workingState,
+        toolName,
+        input,
+        result,
+        this.deps.verificationDetector,
+      )
+    }
+
     return result
   }
+}
+
+/** Update WorkingState based on tool type and result */
+function updateWorkingState(
+  state: import('../workingState.js').WorkingState,
+  toolName: string,
+  input: Record<string, unknown>,
+  _result: ToolResult,
+  verificationDetector?: VerificationDetector,
+): import('../workingState.js').WorkingState {
+  const filePath = typeof input.file_path === 'string' ? input.file_path : undefined
+  switch (toolName) {
+    case 'Read':
+      if (filePath) return recordFileRead(state, filePath)
+      break
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+      if (filePath) return recordFileChange(state, filePath)
+      break
+    case 'Bash': {
+      const detector = verificationDetector ?? new DefaultVerificationDetector()
+      if (detector.isVerification(toolName, input)) {
+        const passed = !_result.isError
+        return recordVerification(state, detector.describe(toolName, input), passed)
+      }
+      break
+    }
+  }
+  return state
 }

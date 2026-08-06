@@ -357,7 +357,12 @@ async function runAgentTaskInner(
 
 export class AgentTool implements Tool {
   name = 'Agent'
+  description = 'Delegate work to a sub-agent'
+  category = 'delegation' as const
+  riskLevel = 'needs_approval' as const
   concurrencySafe = true
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',

@@ -32,6 +32,12 @@ function renderTodoList(): string {
 
 export class TodoWriteTool implements Tool {
   name = 'TodoWrite'
+  description = 'Create and manage structured task lists'
+  category = 'mutation' as const
+  riskLevel = 'safe' as const
+  concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',

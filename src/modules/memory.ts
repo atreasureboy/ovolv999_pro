@@ -9,7 +9,7 @@
  */
 
 import type { Tool, ToolDefinition, ToolResult } from '../core/types.js'
-import type { AgentModule, ModuleBootContext, ModuleBootResult } from '../core/module.js'
+import type { AgentModule, ModuleBootContext, ModuleBootResult, ModuleDescription } from '../core/module.js'
 import type { SemanticMemory } from '../core/semanticMemory.js'
 import type { EpisodicMemory } from '../core/episodicMemory.js'
 import { getMemoryDir, buildMemorySystemSection } from '../memory/index.js'
@@ -22,6 +22,12 @@ import { str } from '../core/strings.js'
 function createMemoryWriteTool(semantic: SemanticMemory): Tool {
   return {
     name: 'memory_write',
+    description: 'Store knowledge in long-term memory',
+    category: 'mutation' as const,
+    riskLevel: 'safe' as const,
+    concurrencySafe: true,
+    planModeAllowed: true,
+    informationalAllowed: true,
     definition: {
       type: 'function',
       function: {
@@ -99,6 +105,12 @@ Higher-priority sources override lower ones on conflict.`,
 function createMemorySearchTool(semantic: SemanticMemory): Tool {
   return {
     name: 'memory_search',
+    description: 'Search long-term memory for relevant knowledge',
+    category: 'readonly' as const,
+    riskLevel: 'safe' as const,
+    concurrencySafe: true,
+    planModeAllowed: true,
+    informationalAllowed: true,
     definition: {
       type: 'function',
       function: {
@@ -163,6 +175,12 @@ Use this to recall past learnings, user preferences, or project conventions that
 function createMemoryRecallTool(episodic: EpisodicMemory): Tool {
   return {
     name: 'memory_recall',
+    description: 'Recall recent actions and their outcomes',
+    category: 'readonly' as const,
+    riskLevel: 'safe' as const,
+    concurrencySafe: true,
+    planModeAllowed: true,
+    informationalAllowed: true,
     definition: {
       type: 'function',
       function: {
@@ -341,5 +359,32 @@ export class MemoryModule implements AgentModule {
       outcome: result.isError ? ('failure' as const) : ('success' as const),
       timestamp: new Date().toISOString(),
     })
+  }
+
+  onStateSnapshot(): Record<string, unknown> | null {
+    // Semantic memory persists to disk already — snapshot just returns stats
+    return {
+      memoryEntryCount: this.semantic.count(),
+      memoryLastSave: new Date().toISOString(),
+    }
+  }
+
+  onStateRestore(_state: Record<string, unknown>): void {
+    // Memory is disk-persistent; state restore is for runtime-only data
+    // No action needed — on next boot, memory reloads from disk
+  }
+
+  async onDispose(): Promise<void> {
+    await this.semantic.flush()
+  }
+
+  describe(): ModuleDescription {
+    return {
+      name: this.name,
+      capabilities: ['semantic-memory', 'episodic-memory', 'relevance-retrieval'],
+      version: '1.0.0',
+      dependencies: [],
+      tools: ['memory_write', 'memory_search', 'memory_recall'],
+    }
   }
 }

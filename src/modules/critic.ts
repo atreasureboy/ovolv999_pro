@@ -14,6 +14,10 @@ import type {
   ModuleBootResult,
   ModuleIterationContext,
   ModuleIterationResult,
+  ModuleErrorContext,
+  ErrorRecoveryAction,
+  ModuleDescription,
+  EngineError,
 } from '../core/module.js'
 import {
   CRITIC_INTERVAL,
@@ -64,11 +68,18 @@ export class CriticModule implements AgentModule {
       )
 
       const output = response.choices[0]?.message?.content ?? ''
-      const criticism = parseCriticOutput(output)
+      const issues = parseCriticOutput(output)
 
-      if (criticism) {
+      if (issues && issues.length > 0) {
+        const formatted = issues
+          .map((issue, i) => {
+            let line = `[问题] ${issue.problem}`
+            if (issue.correction) line += `\n[纠正] ${issue.correction}`
+            return line
+          })
+          .join('\n\n')
         return {
-          injectMessage: `[🔍 自动纠错检查]\n${criticism}\n\n请根据以上纠错提示立即调整行动。`,
+          injectMessage: `[🔍 自动纠错检查]\n${formatted}\n\n请根据以上纠错提示立即调整行动。`,
         }
       }
     } catch (err) {
@@ -78,6 +89,19 @@ export class CriticModule implements AgentModule {
         iteration: ctx.iteration,
         error: (err as Error).message,
       })
+    }
+  }
+
+  onError(error: EngineError, _ctx: ModuleErrorContext): ErrorRecoveryAction | void {
+    if (error.source === 'llm') return // let engine's default retry handle LLM errors
+    return { action: 'continue' }
+  }
+
+  describe(): ModuleDescription {
+    return {
+      name: this.name,
+      capabilities: ['periodic-reflection', 'self-correction-detection'],
+      version: '1.0.0',
     }
   }
 }

@@ -21,6 +21,12 @@ export interface EditFileInput {
 
 export class FileEditTool implements Tool {
   name = 'Edit'
+  description = 'Make targeted edits to a file'
+  category = 'mutation' as const
+  riskLevel = 'safe' as const
+  concurrencySafe = false
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',
@@ -112,6 +118,7 @@ export class FileEditTool implements Tool {
       return {
         content: `Edited ${file_path}: replaced ${count} occurrence${count !== 1 ? 's' : ''}`,
         isError: false,
+        linesChanged: count,
       }
     } catch (err: unknown) {
       const error = err as NodeJS.ErrnoException

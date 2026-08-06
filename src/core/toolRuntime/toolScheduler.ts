@@ -20,21 +20,18 @@ export function partitionToolCalls(calls: ParsedToolCall[], tools?: Tool[]): Too
   const batches: ToolBatch[] = []
   const findTool = (name: string) => tools?.find((t) => t.name === name)
 
-  // Fallback to legacy safe tools set when no tools are provided
-  const LEGACY_SAFE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Bash', 'Agent', 'TmuxSession'])
-
   for (const call of calls) {
     const tool = findTool(call.tc.name)
     let claims: ResourceClaim[] = []
     let parallelizable = false
 
     if (tool?.metadata?.claims) {
-      // New path: use resource claims
+      // New path: use resource claims — tools that declare claims bypass simple concurrencySafe
       claims = tool.metadata.claims(call.input)
-      parallelizable = claims.length > 0
-    } else if (!tools) {
-      // Legacy path: use hardcoded safe tools set when no tools array provided
-      parallelizable = LEGACY_SAFE_TOOLS.has(call.tc.name)
+      parallelizable = true
+    } else if (tool) {
+      // Primary path: use Tool's own concurrencySafe declaration
+      parallelizable = tool.concurrencySafe
     }
 
     const last = batches[batches.length - 1]
@@ -57,26 +54,6 @@ export function partitionToolCalls(calls: ParsedToolCall[], tools?: Tool[]): Too
         calls: [call],
         accumulatedClaims: [...claims],
       })
-    }
-  }
-
-  return batches
-}
-
-function legacyPartitionToolCalls(
-  calls: ParsedToolCall[],
-  safeNames: ReadonlySet<string>,
-): ToolBatch[] {
-  const batches: ToolBatch[] = []
-
-  for (const call of calls) {
-    const safe = safeNames.has(call.tc.name)
-    const last = batches[batches.length - 1]
-
-    if (last && last.safe && safe) {
-      last.calls.push(call)
-    } else {
-      batches.push({ safe, calls: [call], accumulatedClaims: [] })
     }
   }
 
@@ -111,7 +88,7 @@ export class ToolScheduler {
     turnAbortController: AbortController,
     messages: OpenAIMessage[],
     turnNumber: number,
-    safeNames?: ReadonlySet<string>,
+    _deprecatedSafeNames?: ReadonlySet<string>,
   ): Promise<{ aborted: boolean }> {
     const turnAbortSignal = turnAbortController.signal
 
@@ -142,10 +119,8 @@ export class ToolScheduler {
     }
     if (validCalls.length === 0) return { aborted: false }
 
-    const hasClaimTools = this.deps.toolRegistry.getAll().some((t) => t.metadata?.claims)
-    const batches = hasClaimTools && this.deps.useResourceClaims
-      ? partitionToolCalls(validCalls, this.deps.toolRegistry.getAll())
-      : legacyPartitionToolCalls(validCalls, safeNames ?? new Set())
+    // All tools now declare concurrencySafe — use Tool fields exclusively
+    const batches = partitionToolCalls(validCalls, this.deps.toolRegistry.getAll())
 
     for (const batch of batches) {
       if (turnAbortSignal.aborted) return { aborted: true }

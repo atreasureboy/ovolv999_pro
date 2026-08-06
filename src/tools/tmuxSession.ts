@@ -58,7 +58,12 @@ function chunkText(text: string, size = 50): string[] {
 
 export class TmuxSessionTool implements Tool {
   name = 'TmuxSession'
+  description = 'Manage tmux terminal sessions'
+  category = 'system' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',

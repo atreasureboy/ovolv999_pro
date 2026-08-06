@@ -10,7 +10,7 @@
  */
 
 import type OpenAI from 'openai'
-import type { AgentModule, ModuleBootResult, ModuleRunContext } from '../core/module.js'
+import type { AgentModule, ModuleBootResult, ModuleRunContext, ModuleDescription, ErrorRecoveryAction, EngineError, ModuleErrorContext } from '../core/module.js'
 import type { SemanticMemory } from '../core/semanticMemory.js'
 import type { EpisodicMemory } from '../core/episodicMemory.js'
 
@@ -127,6 +127,25 @@ export class ReflectionModule implements AgentModule {
     }
     return parts.join('\n')
   }
+
+  onError(error: EngineError, _ctx: ModuleErrorContext): ErrorRecoveryAction | void {
+    // Reflection wants to see the full run complete — let engine decide
+    if (error.class === 'fatal') return { action: 'abort' }
+    return // default engine behavior
+  }
+
+  async onDispose(): Promise<void> {
+    // No persistent connections to clean up
+  }
+
+  describe(): ModuleDescription {
+    return {
+      name: this.name,
+      capabilities: ['post-run-analysis', 'pattern-extraction', 'knowledge-consolidation'],
+      version: '1.0.0',
+      dependencies: ['memory'],
+    }
+  }
 }
 
 /** Parse LLM reflection output into knowledge entries (standalone, not private) */
@@ -203,7 +222,7 @@ export async function consolidateSession(
     const parsed = parseReflection(output)
 
     for (const entry of parsed) {
-await semantic.write({
+      await semantic.write({
         content: `[session] ${entry.content}`,
         tags: entry.tags,
         source: 'consolidation',

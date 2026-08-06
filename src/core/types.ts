@@ -72,6 +72,19 @@ export interface ToolDefinition {
 export interface ToolResult {
   content: string
   isError: boolean
+  // ── Structured result fields (optional, backward-compatible) ─────
+  /** Exit code for command executions (0 = success, non-zero = failure) */
+  exitCode?: number
+  /** Captured stdout */
+  stdout?: string
+  /** Captured stderr */
+  stderr?: string
+  /** Number of lines changed by the operation (Edit/MultiEdit) */
+  linesChanged?: number
+  /** Number of bytes written (Write) */
+  bytesWritten?: number
+  /** Whether the operation is retryable */
+  retryable?: boolean
 }
 
 export interface ToolMetadata {
@@ -86,21 +99,65 @@ export interface ToolMetadata {
   claims?: (input: Record<string, unknown>) => ResourceClaim[]
 }
 
+// ── Tool category: what class of operation this tool performs ──
+export type ToolCategory = 'readonly' | 'mutation' | 'system' | 'external' | 'delegation'
+
+// ── Risk level: how dangerous this tool is ──
+export type RiskLevel = 'safe' | 'needs_approval' | 'dangerous'
+
 export interface Tool {
   name: string
+  description: string
   metadata?: ToolMetadata
   definition: ToolDefinition
+
+  // ── Category (engine auto-decides filtering, concurrency, etc.) ──
+  category: ToolCategory
+  riskLevel: RiskLevel
+
   /**
    * True if this tool is safe to run concurrently with other safe tools within
    * a single LLM response (e.g. read-only tools, independent Bash calls).
    */
-  concurrencySafe?: boolean
+  concurrencySafe: boolean
+
+  /** Whether this tool may exceed typical execution time */
+  longRunning?: boolean
+
+  // ── Declarations (engine auto-filters, no more hardcoded constants) ──
+  /** Whether this tool is available in plan mode */
+  planModeAllowed: boolean
+
+  /** Whether this tool is available for informational tasks */
+  informationalAllowed: boolean
+
+  /** When user confirmation is required — kind + pattern */
+  requiresConfirmation?: ToolConfirmationRequirement
+
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
+
   /**
    * Per-input concurrency check. If implemented, engine uses this instead of
    * the static concurrencySafe flag.
    */
   isConcurrencySafe?(input: Record<string, unknown>): boolean
+
+  /** Pre-validation hook — validate input before execution */
+  validateInput?(input: Record<string, unknown>): ToolValidationResult
+
+  /** Post-processing hook — modify result after execution */
+  postProcess?(result: ToolResult): ToolResult
+}
+
+/** When user confirmation is required */
+export interface ToolConfirmationRequirement {
+  kind: 'always' | 'outside_cwd' | 'pattern'
+  pattern?: string // regex pattern string for pattern kind
+}
+
+export interface ToolValidationResult {
+  valid: boolean
+  errors?: string[]
 }
 
 export interface ToolContext {
@@ -179,4 +236,6 @@ export interface TurnResult {
   reason: 'max_iterations' | 'stop_sequence' | 'error' | 'interrupted'
   output: string
   error?: string
+  /** Completion contract status — null when not evaluated */
+  completionStatus?: string
 }

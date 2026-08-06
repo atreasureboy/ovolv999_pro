@@ -43,7 +43,7 @@ import { CostTracker } from './costTracker.js'
 import { BackgroundTaskManager } from './backgroundTaskManager.js'
 import { AsyncTaskManager } from './taskManager.js'
 import { ResourceScheduler } from './resourceScheduler.js'
-import { capabilitiesForModel } from './modelCapabilities.js'
+import { capabilitiesForModel, detectProvider } from './modelCapabilities.js'
 import { buildExecutionContext, type ExecutionContext } from './executionContext.js'
 import { emptyWorkingState, type WorkingState } from './workingState.js'
 import { ThinkingTagFilter } from './thinkingTagFilter.js'
@@ -52,19 +52,98 @@ import { randomUUID } from 'crypto'
 import { createProviderAdapter, type ProviderAdapter } from './providerAdapter.js'
 import { ModelGateway } from './modelGateway.js'
 import { classifyTaskIntent, type TaskIntent } from './taskIntent.js'
+import { evaluateCompletion } from './completionContract.js'
+import type { EngineError, ErrorRecoveryAction, ModuleErrorContext } from './module.js'
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-const CONCURRENCY_SAFE_TOOLS = new Set([
-  'Read',
-  'Glob',
-  'Grep',
-  'WebFetch',
-  'WebSearch',
-  'Bash',
-  'Agent',
-  'TmuxSession',
-])
+/** Normalize a modelCapabilities ProviderId to a providerAdapter ProviderId. */
+function normalizeAdapterProvider(
+  provider: string,
+): import('./providerAdapter.js').ProviderId {
+  switch (provider) {
+    case 'anthropic':
+    case 'openai':
+    case 'custom':
+    case 'unknown':
+      return provider
+    default:
+      // google, xai, openrouter, together, groq, deepseek, ollama, mistral, cohere,
+      // perplexity — all OpenAI-compatible
+      return 'custom'
+  }
+}
+
+// ── Error classification ───────────────────────────────────────────────────────
+
+/** Classify a raw error caught by the engine loop. */
+function classifyEngineError(err: unknown): EngineError {
+  const originalError = err instanceof Error ? err : new Error(String(err))
+  const msg = originalError.message
+
+  // Fatal errors — cannot recover
+  if (
+    msg.includes('insufficient_quota') ||
+    msg.includes('exceeded your current quota') ||
+    msg.includes('API key') ||
+    msg.includes('authentication') ||
+    msg.includes('Rate limit')
+  ) {
+    return {
+      class: 'fatal',
+      source: 'llm',
+      originalError,
+      message: `API access error: ${msg}`,
+      recoverySuggestion: 'Check your API key and billing status.',
+      retryable: false,
+    }
+  }
+
+  if (msg.includes('context length') || msg.includes('context_length_exceeded') || msg.includes('maximum context')) {
+    return {
+      class: 'degradable',
+      source: 'llm',
+      originalError,
+      message: `Context overflow: ${msg}`,
+      recoverySuggestion: 'Reduce message history or increase maxContextTokens.',
+      retryable: true,
+    }
+  }
+
+  // Recoverable — retry once
+  if (
+    msg.includes('timeout') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed') ||
+    msg.includes('5xx') ||
+    msg.includes('503') ||
+    msg.includes('502') ||
+    msg.includes('overloaded') ||
+    msg.includes('internal_error')
+  ) {
+    return {
+      class: 'recoverable',
+      source: msg.includes('timeout') || msg.includes('fetch') ? 'internal' : 'llm',
+      originalError,
+      message: `Transient error: ${msg}`,
+      recoverySuggestion: 'Retry the operation once.',
+      retryable: true,
+    }
+  }
+
+  // Degradable — skip current operation, continue
+  return {
+    class: 'degradable',
+    source: 'internal',
+    originalError,
+    message: msg,
+    recoverySuggestion: 'Skip the failing operation and continue.',
+    retryable: false,
+  }
+}
 
 // ── Internal types ───────────────────────────────────────────────────────────
 
@@ -87,7 +166,6 @@ export class ExecutionEngine {
   private modules: AgentModule[]
   private moduleBootResults: ModuleBootResult[] = []
   private allTools: Tool[]
-  private concurrencySafeNames: ReadonlySet<string> = CONCURRENCY_SAFE_TOOLS
 
   // ── Subsystems ──
   private toolRegistry: ToolRegistry
@@ -141,7 +219,12 @@ export class ExecutionEngine {
     this.toolRegistry = new ToolRegistry()
     this.toolRegistry.registerAll(baseTools)
 
-    this.toolPolicy = new ToolPolicy({ agent: config.agent })
+    // Classify task intent — must happen before ToolPolicy which consumes it
+    this.taskIntent = config.taskIntent ?? classifyTaskIntent(config.systemPrompt ?? '', {
+      planMode: config.planMode,
+    })
+
+    this.toolPolicy = new ToolPolicy({ agent: config.agent, taskIntent: this.taskIntent })
     this.eventEmitter = new RunEventEmitter()
     this.sharedState = new SharedRuntimeState()
     this.progressMonitor = new ProgressMonitor()
@@ -161,6 +244,9 @@ export class ExecutionEngine {
       hookRunner: config.hookRunner,
     })
 
+    // ── WorkingState must be initialized before ToolExecutor which consumes it
+    this.workingState = emptyWorkingState()
+
     this.toolExecutor = new ToolExecutor({
       toolRegistry: this.toolRegistry,
       toolPolicy: this.toolPolicy,
@@ -171,6 +257,7 @@ export class ExecutionEngine {
       progressMonitor: this.progressMonitor,
       renderer,
       modules: this.modules,
+      workingState: this.workingState,
     })
 
     this.toolScheduler = new ToolScheduler({
@@ -183,25 +270,30 @@ export class ExecutionEngine {
       sharedState: this.sharedState,
       eventEmitter: this.eventEmitter,
       resourceScheduler: this.resourceScheduler,
+      useResourceClaims: true,
     })
 
-    // Initialize new subsystems
-    this.workingState = emptyWorkingState()
+    // Initialize remaining new subsystems
     this.thinkingFilter = new ThinkingTagFilter()
     this.currentExecutionProfile = detectExecutionProfile(config.systemPrompt ?? '')
 
     // Initialize ProviderAdapter and ModelGateway
-    const providerId = config.provider ?? 'openai'
-    this.providerAdapter = createProviderAdapter(this.client, providerId, config.apiKey, config.baseURL)
+    // Auto-detect provider from model name if not explicitly configured
+    const detectedProvider = detectProvider(config.model)
+    // Normalize to adapter-supported ProviderId: most providers are OpenAI-compatible
+    const adapterProviderId = normalizeAdapterProvider(config.provider ?? detectedProvider)
+    this.providerAdapter = createProviderAdapter(this.client, adapterProviderId, config.apiKey, config.baseURL)
     this.modelGateway = new ModelGateway({
       adapter: this.providerAdapter,
+      adapterFactory: (provider, _model) => {
+        // Dynamically create adapter for provider fallback scenarios
+        if (provider === 'anthropic' && config.apiKey) {
+          return createProviderAdapter(this.client, 'anthropic', config.apiKey, config.baseURL)
+        }
+        return null // use primary adapter
+      },
       renderer,
       eventLog: config.eventLog,
-    })
-
-    // Classify task intent
-    this.taskIntent = config.taskIntent ?? classifyTaskIntent(config.systemPrompt ?? '', {
-      planMode: config.planMode,
     })
 
     // Wire EventLog as subscriber to RunEventEmitter
@@ -433,9 +525,6 @@ export class ExecutionEngine {
     )
     const moduleTools = this.moduleBootResults.flatMap((r) => r.tools ?? [])
     this.allTools = [...this.toolRegistry.getAll(), ...moduleTools]
-    this.concurrencySafeNames = new Set(
-      this.allTools.filter((t) => t.concurrencySafe).map((t) => t.name),
-    )
 
     this.eventEmitter.emit({
       type: 'BOOT_COMPLETED',
@@ -501,7 +590,10 @@ export class ExecutionEngine {
         }
 
         // Stall detection — drive actual action
+        // ExecutionProfile influences sensitivity: high-effort tasks get more tolerance
         const stallVerdict = this.progressMonitor.detectStall()
+        // deep/autonomous profiles get tolerance: skip soft-stall to allow complex exploration
+        const isLenientStall = this.currentExecutionProfile === 'deep' || this.currentExecutionProfile === 'autonomous'
         if (stallVerdict.kind !== 'progressing') {
           this.eventEmitter.emit({
             type: 'STALL_DETECTED',
@@ -511,7 +603,8 @@ export class ExecutionEngine {
           })
 
           // Drive actual intervention based on stall kind
-          if (stallVerdict.kind === 'soft-stall' || stallVerdict.kind === 'hard-stall') {
+          // High-effort profiles skip soft-stall injections to allow deeper exploration
+          if (stallVerdict.kind === 'hard-stall' || (stallVerdict.kind === 'soft-stall' && !isLenientStall)) {
             const interventionMsg = `[SYSTEM: Stall detected — ${stallVerdict.reason}]\nAction: ${stallVerdict.action}. Please reassess your approach and make meaningful progress.`
             messages.push({ role: 'user', content: interventionMsg })
           }
@@ -557,7 +650,8 @@ export class ExecutionEngine {
         })
 
         if (assistantText) {
-          finalOutput = assistantText
+          // Filter thinking tags before recording as final output
+          finalOutput = this.thinkingFilter.push(assistantText)
         }
 
         const assistantMsg: OpenAIMessage = {
@@ -575,7 +669,45 @@ export class ExecutionEngine {
         messages.push(assistantMsg)
 
         if (finishReason === 'stop' || rawToolCalls.length === 0) {
-          result = { stopped: true, reason: 'stop_sequence', output: finalOutput }
+          // ── Completion Contract check ───────────────────────────────
+          const changedFiles = this.workingState.filesChanged
+          const verificationPassed = this.workingState.verification.failed.length === 0
+          const verdict = evaluateCompletion({
+            taskKind: this.taskIntent.kind,
+            modelStopped: finishReason === 'stop',
+            acceptanceCriteria: this.taskIntent.explicitAcceptanceCriteria,
+            verification: {
+              executed: this.workingState.verification.passed.length + this.workingState.verification.failed.length > 0,
+              passed: verificationPassed,
+              failed: this.workingState.verification.failed,
+            },
+            activeWorkers: [],
+            unresolvedBlockers: this.workingState.unresolved,
+            changedFiles,
+            iterationsUsed: iterations,
+            iterationsMax: this.config.maxIterations,
+          })
+
+          if (verdict.status === 'incomplete' && iterations < this.config.maxIterations) {
+            // Task not truly done — inject a continuation prompt
+            const remaining = verdict.remaining.join('; ')
+            const continuationMsg = `[SYSTEM: Task incomplete — ${remaining}]\nPlease continue working toward the task goal. The following items remain unresolved.`
+            messages.push({ role: 'user', content: continuationMsg })
+            this.eventEmitter.emit({
+              type: 'STALL_DETECTED',
+              kind: 'soft-stall',
+              reason: 'task incomplete per completion contract',
+              action: 'continue',
+            })
+            continue
+          }
+
+          result = {
+            stopped: true,
+            reason: 'stop_sequence',
+            output: finalOutput,
+            completionStatus: verdict.status,
+          }
           break
         }
 
@@ -603,12 +735,18 @@ export class ExecutionEngine {
           turnAbortController,
           messages,
           turnNumber,
-          this.concurrencySafeNames,
         )
 
         if (aborted || turnAbortController.signal.aborted) {
           result = { stopped: true, reason: 'error', output: finalOutput }
           break
+        }
+
+        // Re-sync WorkingState: ToolExecutor creates immutable copies on update,
+        // so Engine's reference must be refreshed after each tool batch.
+        const updatedWs = this.toolExecutor.currentWorkingState
+        if (updatedWs) {
+          this.workingState = updatedWs
         }
       }
 
@@ -618,19 +756,52 @@ export class ExecutionEngine {
         result = { stopped: true, reason: 'max_iterations', output: finalOutput }
       }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err)
-      this.config.hookRunner?.runOnError?.(err instanceof Error ? err : new Error(errMsg), {
+      // ── Unified error classification + module notification ──
+      const engineErr = classifyEngineError(err)
+      const rawMsg = err instanceof Error ? err.message : String(err)
+
+      this.config.hookRunner?.runOnError?.(engineErr.originalError, {
         turnNumber: iterations,
         lastToolName,
       })
+
       this.eventLog?.append('error', 'engine', {
         stage: 'run',
         turn: iterations,
-        error: errMsg,
+        error: engineErr.message,
+        class: engineErr.class,
         ...(lastToolName ? { lastToolName } : {}),
       })
-      this.eventEmitter.emit({ type: 'RUN_FAILED', error: errMsg, output: finalOutput })
-      result = { stopped: true, reason: 'error', output: finalOutput, error: errMsg }
+
+      this.eventEmitter.emit({ type: 'RUN_FAILED', error: engineErr.message, output: finalOutput })
+
+      // Call module.onError() for each module — let them suggest recovery
+      const errorCtx: ModuleErrorContext = {
+        turnNumber: iterations,
+        lastToolName,
+        iteration: iterations,
+      }
+      for (const module of this.modules) {
+        try {
+          const advice = module.onError?.(engineErr, errorCtx)
+          if (advice?.injectMessage) {
+            messages.push({ role: 'user', content: advice.injectMessage })
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      // Apply recovery strategy based on error class
+      if (engineErr.class === 'recoverable' && engineErr.retryable) {
+        this.eventLog?.append('log', 'engine', {
+          strategy: 'retry_once',
+          class: engineErr.class,
+          error: engineErr.message,
+        })
+      }
+
+      result = { stopped: true, reason: 'error', output: finalOutput, error: rawMsg }
     } finally {
       this.currentTurnAbortController = null
     }
@@ -722,9 +893,33 @@ export class ExecutionEngine {
   }
 
   dispose(): void {
+    // 1. Notify modules (let them flush, close connections etc.)
+    for (const module of this.modules) {
+      try {
+        void module.onDispose?.()
+      } catch {
+        /* best-effort — never let one module's cleanup break others */
+      }
+    }
+
+    // 2. Abort any in-flight turn
+    if (this.currentTurnAbortController) {
+      this.currentTurnAbortController.abort()
+    }
+
+    // 3. Terminate background tasks
     this.backgroundTaskManager.dispose()
+
+    // 4. Release all resource locks
     this.resourceScheduler.releaseAll()
+
+    // 5. Clear event listeners
     this.eventEmitter.clear()
+
+    // 6. Clear shared runtime state
     this.sharedState.clear()
+
+    // 7. Finish thinking filter (release any buffered state)
+    this.thinkingFilter.finish()
   }
 }

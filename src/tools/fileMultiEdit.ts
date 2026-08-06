@@ -23,6 +23,12 @@ export interface MultiEditFileInput {
 
 export class FileMultiEditTool implements Tool {
   name = 'MultiEdit'
+  description = 'Apply multiple edits to a file at once'
+  category = 'mutation' as const
+  riskLevel = 'safe' as const
+  concurrencySafe = false
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',
@@ -177,6 +183,7 @@ export class FileMultiEditTool implements Tool {
       return {
         content: `Successfully applied ${chunks.length} edit chunks (${editCount} replacements) to ${file_path}`,
         isError: false,
+        linesChanged: editCount,
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)

@@ -67,7 +67,12 @@ function htmlToMarkdown(html: string): { title?: string; description?: string; m
 
 export class WebFetchTool implements Tool {
   name = 'WebFetch'
+  description = 'Fetch and analyze web page content'
+  category = 'external' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',

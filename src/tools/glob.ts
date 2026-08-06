@@ -15,7 +15,12 @@ export interface GlobInput {
 
 export class GlobTool implements Tool {
   name = 'Glob'
+  description = 'Find files matching patterns'
+  category = 'readonly' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',

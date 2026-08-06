@@ -49,10 +49,14 @@ export function wrapMcpTool(client: McpClient, descriptor: McpToolDescriptor): T
   const callName = `mcp__${client.serverName}__${descriptor.name}`
   return {
     name: callName,
-    // MCP tools are treated as concurrency-unsafe by default: their side effects
-    // are unknown, so serialise them. Consumers whose MCP tools are read-only
-    // can flip this per-tool in a follow-up.
+    description: descriptor.description ?? `MCP tool: ${descriptor.name}`,
+    category: 'external' as const,
+    riskLevel: 'needs_approval' as const,
     concurrencySafe: false,
+    // MCP tools are external by nature — don't allow in plan/informational mode
+    // unless the server declares otherwise (editable via .ovogo/mcp.json)
+    planModeAllowed: false,
+    informationalAllowed: false,
     definition: {
       type: 'function',
       function: {

@@ -87,6 +87,8 @@ export class SemanticMemory {
   private entries: Map<string, SemanticMemoryEntry> = new Map()
   private vectors: Map<string, Map<string, number>> = new Map()
   private tagIndex: TagIndex = {}
+  /** O(1) dedup index: content hash → entry id */
+  private hashToId: Map<string, string> = new Map()
   private loaded = false
   private loadPromise: Promise<void> | null = null
 
@@ -123,6 +125,7 @@ export class SemanticMemory {
           const entry = JSON.parse(line) as SemanticMemoryEntry
           this.entries.set(entry.id, entry)
           this.vectors.set(entry.id, extractTermVector(entry.content))
+          this.hashToId.set(contentHash(entry.content), entry.id)
           for (const tag of entry.tags) {
             if (!this.tagIndex[tag]) this.tagIndex[tag] = new Set()
             this.tagIndex[tag].add(entry.id)
@@ -140,9 +143,12 @@ export class SemanticMemory {
     await this.ensureLoaded()
 
     const hash = contentHash(entry.content)
+    const existingId = this.hashToId.get(hash)
 
-    for (const [id, existing] of this.entries) {
-      if (contentHash(existing.content) === hash) {
+    if (existingId) {
+      const existing = this.entries.get(existingId)
+      if (existing) {
+        // Lower-priority source doesn't overwrite higher-priority one
         if (sourceRank(entry.source) < sourceRank(existing.source)) {
           return existing
         }
@@ -152,16 +158,20 @@ export class SemanticMemory {
           timestamp: new Date().toISOString(),
           source: entry.source,
         }
-        this.entries.set(id, updated)
-        this.vectors.set(id, extractTermVector(updated.content))
+        this.entries.set(existingId, updated)
+        this.vectors.set(existingId, extractTermVector(updated.content))
+        this.hashToId.set(hash, existingId)
         await this.persistAllAsync()
         return updated
       }
+      // Stale index entry — clean up
+      this.hashToId.delete(hash)
     }
 
     const full: SemanticMemoryEntry = { ...entry, id: nextId() }
     this.entries.set(full.id, full)
     this.vectors.set(full.id, extractTermVector(full.content))
+    this.hashToId.set(hash, full.id)
 
     for (const tag of full.tags) {
       if (!this.tagIndex[tag]) this.tagIndex[tag] = new Set()
@@ -194,6 +204,17 @@ export class SemanticMemory {
   async readAll(): Promise<SemanticMemoryEntry[]> {
     await this.ensureLoaded()
     return Array.from(this.entries.values())
+  }
+
+  /** Number of entries in memory (O(1)). */
+  count(): number {
+    return this.entries.size
+  }
+
+  /** Force-flush in-memory state to disk. */
+  async flush(): Promise<void> {
+    await this.ensureLoaded()
+    await this.persistAllAsync()
   }
 
   /**

@@ -5,9 +5,11 @@
 set -e
 cd "$(dirname "$0")"
 
-# 加载 .env
+# 加载 .env（安全方式：逐行 source 而非 export 注入）
 if [ -f .env ]; then
-    export "$(grep -v '^#' .env | xargs)"
+    set -a
+    . ./.env
+    set +a
 fi
 
 # 检查 API Key

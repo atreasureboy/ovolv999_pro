@@ -37,7 +37,12 @@ function makeRecordingTool(name = 'Recorder'): { tool: Tool; calls: Record<strin
   const calls: Record<string, unknown>[] = []
   const tool: Tool = {
     name,
+    description: `Test recorder tool: ${name}`,
+    category: 'readonly' as const,
+    riskLevel: 'safe' as const,
     concurrencySafe: true,
+    planModeAllowed: true,
+    informationalAllowed: true,
     definition: {
       type: 'function',
       function: {
@@ -216,7 +221,12 @@ describe('ExecutionEngine runTurn — concurrency actually executes in parallel'
   function makeOverlapTool(name: string, tracker: { active: number; max: number }): Tool {
     return {
       name,
+      description: `Slow tool: ${name}`,
+      category: 'readonly' as const,
+      riskLevel: 'safe' as const,
       concurrencySafe: true,
+      planModeAllowed: true,
+      informationalAllowed: true,
       definition: {
         type: 'function',
         function: {

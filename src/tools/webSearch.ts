@@ -167,7 +167,12 @@ function formatResults(results: SearchResult[], query: string, backend: string):
 
 export class WebSearchTool implements Tool {
   name = 'WebSearch'
+  description = 'Search the web for information'
+  category = 'external' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',

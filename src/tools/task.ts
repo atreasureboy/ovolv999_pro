@@ -22,7 +22,12 @@ export interface TaskInput {
 
 export class TaskTool implements Tool {
   name = 'Task'
+  description = 'Launch and manage background tasks'
+  category = 'system' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = false
+  informationalAllowed = false
 
   definition: ToolDefinition = {
     type: 'function',

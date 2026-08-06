@@ -87,12 +87,49 @@ export function formatMessagesForCritic(messages: OpenAIMessage[]): string {
     .join('\n')
 }
 
+export interface CriticIssue {
+  problem: string
+  correction: string
+}
+
 /**
- * Parse the critic's response. Returns null if the critic found no issues,
- * or the correction string if it did.
+ * Parse the critic's response into structured issues.
+ *
+ * Recognises the `[问题] {desc} [纠正] {action}` format from the critic prompt.
+ * Falls back to returning the raw text as a single issue when the structured
+ * markers are absent.
+ *
+ * @returns null if the critic signalled "OK" (no issues), or an array of
+ *          parsed issues.
  */
-export function parseCriticOutput(output: string): string | null {
+export function parseCriticOutput(output: string): CriticIssue[] | null {
   const trimmed = output.trim()
   if (!trimmed || /^ok[.!]?$/i.test(trimmed)) return null
-  return trimmed
+
+  // Try structured [问题]...[纠正]... parsing
+  const issuePattern = /\[问题\]\s*(.+?)\s*\[纠正\]\s*(.+?)(?=\s*\[问题\]|\s*$)/gs
+  const issues: CriticIssue[] = []
+
+  let match: RegExpExecArray | null
+  while ((match = issuePattern.exec(trimmed)) !== null) {
+    issues.push({
+      problem: match[1].trim(),
+      correction: match[2].trim(),
+    })
+  }
+
+  if (issues.length > 0) return issues.slice(0, 3)
+
+  // Fallback: treat the whole output as one unstructured issue
+  return [{ problem: trimmed, correction: '' }]
+}
+
+/**
+ * Legacy compatibility: returns the concatenated correction text (or null).
+ * @deprecated Use parseCriticOutput() for structured access.
+ */
+export function parseCriticOutputLegacy(output: string): string | null {
+  const parsed = parseCriticOutput(output)
+  if (!parsed) return null
+  return parsed.map((i) => `${i.problem} → ${i.correction}`).join('\n') || null
 }

@@ -6,6 +6,7 @@
 import { readFile } from 'fs/promises'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { READ_FILE_DESCRIPTION } from '../prompts/tools.js'
+import { containsPathTraversal, containsNullByte, isPathWithin } from '../core/pathSecurity.js'
 
 export interface ReadFileInput {
   file_path: string
@@ -17,7 +18,12 @@ const MAX_LINES_DEFAULT = 2000
 
 export class FileReadTool implements Tool {
   name = 'Read'
+  description = 'Read file contents with line numbers'
+  category = 'readonly' as const
+  riskLevel = 'safe' as const
   concurrencySafe = true
+  planModeAllowed = true
+  informationalAllowed = true
 
   definition: ToolDefinition = {
     type: 'function',
@@ -45,11 +51,20 @@ export class FileReadTool implements Tool {
     },
   }
 
-  async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const { file_path, offset, limit } = input as unknown as ReadFileInput
 
     if (!file_path || typeof file_path !== 'string') {
       return { content: 'Error: file_path is required', isError: true }
+    }
+    if (containsNullByte(file_path)) {
+      return { content: 'Error: file_path contains null byte', isError: true }
+    }
+    if (containsPathTraversal(file_path)) {
+      return { content: 'Error: path traversal detected in file_path', isError: true }
+    }
+    if (!isPathWithin(file_path, context.cwd)) {
+      return { content: `Error: file_path must be within the project directory (${context.cwd})`, isError: true }
     }
 
     try {

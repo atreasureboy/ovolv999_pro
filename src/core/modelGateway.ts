@@ -14,9 +14,13 @@ import type { TokenUsage } from './costTracker.js'
 import type { Renderer } from '../ui/renderer.js'
 import type { ProviderAdapter } from './providerAdapter.js'
 import type { EventLog } from './eventLog.js'
+import { detectProvider } from './modelCapabilities.js'
 
 export interface ModelGatewayDeps {
+  /** Primary adapter (used when model matches its provider). */
   adapter: ProviderAdapter
+  /** Optional factory to create adapters for other providers dynamically. */
+  adapterFactory?: (provider: string, model: string) => ProviderAdapter | null
   renderer: Renderer
   eventLog?: EventLog
 }
@@ -64,26 +68,44 @@ export class ModelGatewayError extends Error {
 }
 
 export class ModelGateway {
-  private readonly adapter: ProviderAdapter
+  private readonly primaryAdapter: ProviderAdapter
+  private readonly adapterFactory?: (provider: string, model: string) => ProviderAdapter | null
   private readonly renderer: Renderer
   private readonly eventLog?: EventLog
 
+  /** Currently active adapter (may switch during fallback). */
+  private activeAdapter: ProviderAdapter
+
   constructor(deps: ModelGatewayDeps) {
-    this.adapter = deps.adapter
+    this.primaryAdapter = deps.adapter
+    this.activeAdapter = deps.adapter
+    this.adapterFactory = deps.adapterFactory
     this.renderer = deps.renderer
     this.eventLog = deps.eventLog
   }
 
   get streamUsageSupported(): boolean {
-    return this.adapter.streamUsageSupported
+    return this.activeAdapter.streamUsageSupported
   }
 
   markStreamUsageUnsupported(): void {
-    this.adapter.markStreamUsageUnsupported()
+    this.activeAdapter.markStreamUsageUnsupported()
   }
 
   resetStreamUsageLatch(): void {
-    this.adapter.resetStreamUsageLatch()
+    this.activeAdapter.resetStreamUsageLatch()
+  }
+
+  /** Select the best adapter for a given model. */
+  private selectAdapter(model: string): ProviderAdapter {
+    if (this.adapterFactory) {
+      // Detect provider from model name
+      const provider = detectProvider(model)
+      // Try factory; fall back to primary
+      const custom = this.adapterFactory(provider, model)
+      if (custom) return custom
+    }
+    return this.primaryAdapter
   }
 
   async call(
@@ -92,25 +114,28 @@ export class ModelGateway {
   ): Promise<ModelGatewayResult> {
     const { systemPrompt, messages, toolDefs, model, temperature, maxOutputTokens, abortSignal, turnAbortController } = params
 
+    // Select the appropriate adapter for this model
+    this.activeAdapter = this.selectAdapter(model)
+
     this.renderer.startSpinner()
     const callStartMs = Date.now()
     const attempts: ProviderAttempt[] = []
     let activeModel = model
     let attemptStartMs = callStartMs
 
-    const streamReq = {
-      model,
+    const makeStreamReq = (m: string) => ({
+      model: m,
       systemPrompt,
       messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
       tools: toolDefs,
       temperature,
       maxOutputTokens,
       signal: abortSignal,
-    }
+    })
 
     let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>
     try {
-      stream = await this.adapter.stream(streamReq)
+      stream = await this.activeAdapter.stream(makeStreamReq(model))
     } catch (caught: unknown) {
       this.renderer.stopSpinner()
       const err = caught instanceof Error ? caught : new Error(String(caught))
@@ -118,7 +143,7 @@ export class ModelGateway {
 
       attempts.push({
         model,
-        provider: this.adapter.providerId,
+        provider: this.activeAdapter.providerId,
         success: false,
         error: errMsg,
         latencyMs: Date.now() - attemptStartMs,
@@ -133,12 +158,12 @@ export class ModelGateway {
 
         attemptStartMs = Date.now()
         try {
-          stream = await this.adapter.stream(streamReq)
+          stream = await this.activeAdapter.stream(makeStreamReq(model))
         } catch (retryCaught) {
           const retryError = retryCaught instanceof Error ? retryCaught : new Error(String(retryCaught))
           attempts.push({
             model,
-            provider: this.adapter.providerId,
+            provider: this.activeAdapter.providerId,
             success: false,
             error: retryError.message,
             latencyMs: Date.now() - attemptStartMs,
@@ -155,15 +180,19 @@ export class ModelGateway {
 
         this.renderer.warn(`Provider error on "${model}" — falling back to "${fallbackModel}"`)
         activeModel = fallbackModel
+
+        // Switch adapter if the fallback model belongs to a different provider
+        this.activeAdapter = this.selectAdapter(fallbackModel)
+
         attemptStartMs = Date.now()
 
         try {
-          stream = await this.adapter.stream({ ...streamReq, model: fallbackModel })
+          stream = await this.activeAdapter.stream(makeStreamReq(fallbackModel))
         } catch (fallbackCaught) {
           const fallbackError = fallbackCaught instanceof Error ? fallbackCaught : new Error(String(fallbackCaught))
           attempts.push({
             model: fallbackModel,
-            provider: this.adapter.providerId,
+            provider: this.activeAdapter.providerId,
             success: false,
             error: fallbackError.message,
             latencyMs: Date.now() - attemptStartMs,
@@ -184,7 +213,7 @@ export class ModelGateway {
       const consumeError = consumeCaught instanceof Error ? consumeCaught : new Error(String(consumeCaught))
       attempts.push({
         model: activeModel,
-        provider: this.adapter.providerId,
+        provider: this.activeAdapter.providerId,
         success: false,
         error: consumeError.message,
         latencyMs: Date.now() - attemptStartMs,
@@ -195,7 +224,7 @@ export class ModelGateway {
 
     attempts.push({
       model: activeModel,
-      provider: this.adapter.providerId,
+      provider: this.activeAdapter.providerId,
       success: true,
       latencyMs: Date.now() - attemptStartMs,
       usage: result.usage,
