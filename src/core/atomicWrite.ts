@@ -8,6 +8,7 @@
  */
 
 import { rename, unlink, stat, mkdir, lstat, realpath, open } from 'fs/promises'
+import { renameSync, statSync, mkdirSync, openSync, fsyncSync, writeFileSync, closeSync, fchmodSync } from 'fs'
 import type { FileHandle } from 'fs/promises'
 import { dirname } from 'path'
 import { randomBytes } from 'crypto'
@@ -119,4 +120,33 @@ export async function statSafely(
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw err
   }
+}
+
+/**
+ * Synchronous crash-safe write for callers that can't go async (e.g. session
+ * snapshot saving during a sync REPL loop). Uses the same temp→fsync→rename
+ * pattern as atomicWrite but blocks the event loop — keep data small.
+ */
+export function atomicWriteSync(target: string, content: string, encoding: BufferEncoding = 'utf8'): void {
+  mkdirSync(dirname(target), { recursive: true })
+
+  let existingMode: number | undefined
+  try {
+    existingMode = statSync(target).mode
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+  }
+
+  const tmpPath = `${target}.tmp.${process.pid}.${Date.now()}`
+  const fd = openSync(tmpPath, 'w')
+  try {
+    writeFileSync(fd, content, encoding)
+    if (existingMode !== undefined) {
+      fchmodSync(fd, existingMode)
+    }
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(tmpPath, target)
 }

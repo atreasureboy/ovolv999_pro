@@ -63,6 +63,7 @@ export class CriticModule implements AgentModule {
           ],
           temperature: 0,
           max_tokens: CRITIC_MAX_TOKENS,
+          response_format: { type: 'json_object' },
         },
         { signal: ctx.abortSignal },
       )

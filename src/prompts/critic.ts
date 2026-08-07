@@ -31,10 +31,10 @@ export const DEFAULT_CRITIC_SYSTEM_PROMPT = `你是一个会话的批判性监�
 5. **上下文丢失** — 任务委派中没有提供足够的上下文信息
 6. **输出冗余** — 输出大量无意义的文本，偏离任务执行
 
-输出规则：
-- 发现问题：用 "[问题] {描述}" + "[纠正] {具体应执行什么}" 格式，最多 3 条
-- 没有问题：只输出 "OK"
-- 不解释你的角色，不废话，直接结论`
+你必须返回一个 JSON 对象，格式为：
+- 发现问题：{"issues":[{"problem":"简短描述","correction":"具体应执行什么"}]}
+- 没有问题：{"ok":true}
+- 最多 3 条 issues`
 
 // ── Formatting helpers ────────────────────────────────────────────────
 
@@ -104,7 +104,31 @@ export interface CriticIssue {
  */
 export function parseCriticOutput(output: string): CriticIssue[] | null {
   const trimmed = output.trim()
-  if (!trimmed || /^ok[.!]?$/i.test(trimmed)) return null
+  if (!trimmed) return null
+
+  // Primary path: JSON (response_format: json_object)
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>
+    if (parsed.ok === true) return null
+    if (Array.isArray(parsed.issues)) {
+      const issues = parsed.issues
+        .filter(
+          (i: unknown): i is Record<string, unknown> =>
+            typeof i === 'object' && i !== null && typeof (i as Record<string, unknown>).problem === 'string',
+        )
+        .map((i) => ({
+          problem: String(i.problem),
+          correction: typeof i.correction === 'string' ? i.correction : '',
+        }))
+      if (issues.length > 0) return issues
+    }
+    return null
+  } catch {
+    /* fall through to regex parsing */
+  }
+
+  // Fallback: regex parsing (legacy text format)
+  if (/^ok[.!]?$/i.test(trimmed)) return null
 
   // Try structured [问题]...[纠正]... parsing
   const issuePattern = /\[问题\]\s*(.+?)\s*\[纠正\]\s*(.+?)(?=\s*\[问题\]|\s*$)/gs

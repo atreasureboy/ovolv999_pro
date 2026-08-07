@@ -8,18 +8,14 @@
  */
 
 import {
-  writeFileSync,
   readFileSync,
   existsSync,
   readdirSync,
   statSync,
-  openSync,
-  fsyncSync,
-  closeSync,
-  renameSync,
 } from 'fs'
 import { join, resolve } from 'path'
 import { isPathWithin, containsNullByte } from './pathSecurity.js'
+import { atomicWriteSync } from './atomicWrite.js'
 import type { OpenAIMessage } from './types.js'
 
 export const CURRENT_SESSION_VERSION = 2
@@ -93,23 +89,6 @@ function migrateV1(raw: Record<string, unknown>): ConversationSnapshot {
   }
 }
 
-/**
- * Crash-safe write: temp file → fsync → rename. A direct writeFileSync could
- * leave a torn conversation.json if the process dies mid-write, corrupting
- * every future --resume of the session.
- */
-function writeJsonAtomic(filePath: string, data: string): void {
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`
-  const fd = openSync(tmpPath, 'w')
-  try {
-    writeFileSync(fd, data, 'utf8')
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-  renameSync(tmpPath, filePath)
-}
-
 export function saveConversation(
   sessionDir: string,
   messages: OpenAIMessage[],
@@ -128,7 +107,7 @@ export function saveConversation(
     lastOutcome: outcome,
   }
   try {
-    writeJsonAtomic(join(sessionDir, 'conversation.json'), JSON.stringify(envelope, null, 2))
+    atomicWriteSync(join(sessionDir, 'conversation.json'), JSON.stringify(envelope, null, 2))
   } catch {
     /* best-effort */
   }

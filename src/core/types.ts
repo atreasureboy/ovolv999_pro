@@ -225,6 +225,11 @@ export interface EngineConfig {
   taskIntent?: TaskIntent
   /** Maximum USD cost before the agent stops (checked before each LLM call) */
   maxCostUsd?: number
+  /** Token-bucket rate limiter for API calls (req/s). */
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  rateLimiter?: import('./rateLimiter.js').RateLimiter
+  /** Wrap the system prompt in Anthropic cache_control breakpoints. */
+  cacheSystemPrompt?: boolean
 }
 
 /** Cumulative token usage across one or more turns, for cost observability. */

@@ -21,6 +21,7 @@
  */
 
 import { str } from './strings.js'
+import { classifyCommandRisk } from './riskClassifier.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -337,7 +338,8 @@ export class PermissionChecker {
   async check(input: PermissionCheckInput): Promise<PermissionDecision> {
     const fp = fingerprint(input.tool, input.input)
     const matched = this.matchRule(input.tool, fp)
-    const isDangerous = input.tool === 'Bash' && this.isDangerousCommand(str(input.input.command))
+    const isDangerous =
+      input.tool === 'Bash' && classifyCommandRisk(str(input.input.command)) === 'dangerous'
 
     const action = matched?.action ?? getModeBehavior(this.mode, input.tool, isDangerous)
 
@@ -364,23 +366,4 @@ export class PermissionChecker {
     return { allowed: false, reason: 'requires_approval (no approver wired)' }
   }
 
-  private isDangerousCommand(cmd: string): boolean {
-    const dangerous = [
-      'rm -rf',
-      'rm -fr',
-      'sudo ',
-      'chmod 777',
-      'git push --force',
-      'git push -f',
-      'mkfs',
-      'dd if=',
-      '> /dev/sd',
-      'chown ',
-      'curl ',
-      'wget ',
-      'git commit --amend',
-    ]
-    const normalized = cmd.replace(/\s+/g, ' ').trim()
-    return dangerous.some((d) => normalized.includes(d))
   }
-}

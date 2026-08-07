@@ -53,6 +53,7 @@ import { createProviderAdapter, type ProviderAdapter, type ProviderId } from './
 import { ModelGateway } from './modelGateway.js'
 import { classifyTaskIntent, type TaskIntent } from './taskIntent.js'
 import { evaluateCompletion } from './completionContract.js'
+import type { RateLimiter } from './rateLimiter.js'
 import type { EngineError, ModuleErrorContext } from './module.js'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -199,6 +200,7 @@ interface StreamingToolCall {
 export class ExecutionEngine {
   private client: OpenAI
   private config: EngineConfig
+  private readonly rateLimiter: RateLimiter | undefined
   private renderer: Renderer
   private currentTurnAbortController: AbortController | null = null
   private softAbortRequested = false
@@ -231,6 +233,7 @@ export class ExecutionEngine {
 
   constructor(config: EngineConfig, renderer: Renderer) {
     this.config = applyAgentToConfig(config)
+    this.rateLimiter = this.config.rateLimiter
     this.renderer = renderer
     this.client =
       config.client ??
@@ -412,16 +415,22 @@ export class ExecutionEngine {
 
   // ── System prompt ───────────────────────────────────────────────────────
 
-  private buildSystemPrompt(planMode: boolean, moduleSections: string[] = []): string {
+  private buildSystemPrompt(
+    planMode: boolean,
+    moduleSections: string[] = [],
+  ): string | Record<string, unknown>[] {
     const baseSystemPrompt = this.config.systemPrompt ?? ''
     const sections =
       moduleSections.length > 0
         ? baseSystemPrompt + '\n\n---\n\n' + moduleSections.join('\n\n---\n\n')
         : baseSystemPrompt
-    if (planMode) {
-      return getPlanModePrefix() + sections
+    const text = planMode ? getPlanModePrefix() + sections : sections
+    if (this.config.cacheSystemPrompt) {
+      // Anthropic cache_control — wrap the system prompt as a content block so the
+      // adapter can set cache_control:{type:"ephemeral"} on the last block.
+      return [{ type: 'text', text }]
     }
-    return sections
+    return text
   }
 
   // ── Tool definitions ────────────────────────────────────────────────────
@@ -442,7 +451,7 @@ export class ExecutionEngine {
   // ── LLM call ────────────────────────────────────────────────────────────
 
   private async callLLM(
-    systemPrompt: string,
+    systemPrompt: string | Record<string, unknown>[],
     messages: OpenAIMessage[],
     exposedTools: Tool[],
     turnAbortSignal: AbortSignal,
@@ -602,8 +611,12 @@ export class ExecutionEngine {
     })
 
     const systemPrompt = this.buildSystemPrompt(planMode, moduleSections)
+    const systemPromptText = Array.isArray(systemPrompt)
+      ? // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        systemPrompt.reduce((acc, b) => acc + String(b.text ?? ''), '')
+      : systemPrompt
     this.contextManager.setSystemPromptTokens(
-      this.contextManager.estimateSystemPromptTokens(systemPrompt),
+      this.contextManager.estimateSystemPromptTokens(systemPromptText),
     )
     const exposedTools = this.getToolDefinitions(planMode, moduleTools)
 
@@ -727,6 +740,9 @@ export class ExecutionEngine {
               result = { stopped: true, reason: 'budget_exceeded', output: finalOutput }
               break
             }
+
+            // ── Rate-limit gate (token bucket) ──
+            await this.rateLimiter?.acquire()
 
             // ── Streaming LLM call ──
             const { assistantText, finishReason, rawToolCalls } = await this.callLLM(

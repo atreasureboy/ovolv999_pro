@@ -92,6 +92,7 @@ import {
   resolveSessionArg,
 } from '../src/core/sessionStore.js'
 import { Logger } from '../src/core/logger.js'
+import { RateLimiter } from '../src/core/rateLimiter.js'
 
 const VERSION = '0.1.0'
 
@@ -226,6 +227,8 @@ ENVIRONMENT
   OPENAI_API_KEY         Required — OpenAI API key
   OPENAI_BASE_URL        Optional — compatible endpoint URL
   OVOGO_MAX_COST_USD     Optional — stop when cumulative cost reaches this USD budget
+  OVOGO_RATE_RPS         Optional — API call rate limit in requests/sec (token bucket, default unlimited)
+  OVOGO_CACHE_SYSTEM=1   Optional — enable Anthropic cache_control on the system prompt
 
 CONFIG (.ovogo/agent.json)
   model, maxIterations, maxContextTokens, modules, permission,
@@ -969,6 +972,10 @@ async function main(): Promise<void> {
     maxCostUsd: process.env.OVOGO_MAX_COST_USD
       ? parseFloat(process.env.OVOGO_MAX_COST_USD)
       : agentConfig.maxCostUsd,
+    rateLimiter: process.env.OVOGO_RATE_RPS
+      ? new RateLimiter({ refillRate: parseFloat(process.env.OVOGO_RATE_RPS), maxTokens: 10 })
+      : undefined,
+    cacheSystemPrompt: process.env.OVOGO_CACHE_SYSTEM === '1',
   }
 
   // Plan-mode config: read-only analysis, no reflection (plans aren't completed work)

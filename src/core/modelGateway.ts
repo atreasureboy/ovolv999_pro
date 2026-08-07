@@ -26,7 +26,7 @@ export interface ModelGatewayDeps {
 }
 
 export interface ModelCallParams {
-  systemPrompt: string
+  systemPrompt: string | Record<string, unknown>[]
   messages: OpenAIMessage[]
   toolDefs: ToolDefinition[]
   model: string

@@ -61,6 +61,9 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 - **上下文预算** — 统一百分比阈值 (70% warn / 85% compact)，**含系统提示词 token**，tool_call 对保护
 - **统一 Logger** — 分级日志（stderr-only 不污染 LLM 上下文）+ EventLog 持久化 + debug 环形缓冲
 - **API 重试** — SDK 指数退避 5 次重试 (429/5xx/ECONNRESET)，120s 超时
+- **API 令牌桶速限** — `OVOGO_RATE_RPS` 控制最大请求率，防 429（默认为无限）
+- **Prompt 缓存** — `OVOGO_CACHE_SYSTEM=1` 启用 Anthropic cache_control，缓存命中降成本 ~90%
+- **Critic JSON 结构化输出** — `response_format: json_object` 替代自由文本正则，解析更可靠
 - **引擎级重试** — recoverable 错误自动指数退避重试（2s/4s/8s，最多 3 次），保留对话状态重入主循环
 - **成本预算护栏** — `maxCostUsd`（agent.json 或 `OVOGO_MAX_COST_USD`），每次 LLM 调用前检查，超限优雅停止（budget_exceeded）
 - **子 agent 超时** — `timeout_ms` 参数 / `AgentConfig.timeoutMs`，超时自动中止子引擎（上限 1 小时）
@@ -72,7 +75,7 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        ovolv999 — 统一 Harness + 模块化 Agent 基座             ║
-║              85 files · 16,200+ lines · tsc 0 · eslint 0 · 360 tests          ║
+║              84 files · 16,100+ lines · tsc 0 · eslint 0 · 360 tests          ║
 ║               Runtime deps: openai · glob · zod (仅 3 个)                     ║
 ║               API retry: 5x exponential backoff · 120s timeout                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣

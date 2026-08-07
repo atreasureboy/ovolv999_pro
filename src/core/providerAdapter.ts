@@ -16,7 +16,7 @@ export type ProviderId = 'openai' | 'anthropic' | 'custom' | 'unknown'
 
 export interface ProviderStreamRequest {
   model: string
-  systemPrompt: string
+  systemPrompt: string | Record<string, unknown>[]
   messages: OpenAI.Chat.ChatCompletionMessageParam[]
   tools: ToolDefinition[]
   temperature?: number
@@ -64,9 +64,16 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   ): Promise<AsyncIterable<OpenAI.Chat.ChatCompletionChunk>> {
     const { model, systemPrompt, messages, tools, temperature, maxOutputTokens, signal } = req
 
+    // OpenAI doesn't use Anthropic's cache_control content-block format.
+    // When the engine wraps the prompt as an array, extract the plain text.
+    const systemContent = Array.isArray(systemPrompt)
+      ? // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        systemPrompt.map((b) => String(b.text ?? '')).join('\n')
+      : systemPrompt
+
     const baseBody = {
       model,
-      messages: [{ role: 'system' as const, content: systemPrompt }, ...messages],
+      messages: [{ role: 'system' as const, content: systemContent }, ...messages],
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? ('auto' as const) : undefined,
       temperature: temperature ?? 0,
@@ -194,7 +201,19 @@ export class AnthropicAdapter implements ProviderAdapter {
       stream: true,
     }
 
-    if (systemPrompt) body.system = systemPrompt
+    if (systemPrompt) {
+      // When the engine wraps the prompt as a content array (cacheSystemPrompt=true),
+      // annotate the last block with cache_control so Anthropic caches it across turns.
+      if (Array.isArray(systemPrompt)) {
+        const blocks = [...systemPrompt] as Record<string, unknown>[]
+        if (blocks.length > 0) {
+          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } }
+        }
+        body.system = blocks
+      } else {
+        body.system = systemPrompt
+      }
+    }
     if (anthropicTools) body.tools = anthropicTools
     if (temperature !== undefined) body.temperature = temperature
 
@@ -506,18 +525,33 @@ async function* anthropicSSEToOpenAIChunks(
  * @param apiKey   API 密钥（Anthropic 适配器必需）
  * @param baseURL  自定义 API 端点
  */
+// ── Pluggable provider registry ────────────────────────────────────────
+
+type ProviderFactory = (
+  client: OpenAI,
+  apiKey?: string,
+  baseURL?: string,
+) => ProviderAdapter
+
+const providerFactories = new Map<ProviderId, ProviderFactory>()
+
+/** Register a custom provider adapter factory at runtime. */
+export function registerProviderFactory(providerId: ProviderId, factory: ProviderFactory): void {
+  providerFactories.set(providerId, factory)
+}
+
 export function createProviderAdapter(
   client: OpenAI,
   provider: ProviderId = 'openai',
   apiKey?: string,
   baseURL?: string,
 ): ProviderAdapter {
+  const factory = providerFactories.get(provider)
+  if (factory) return factory(client, apiKey, baseURL)
+
   switch (provider) {
     case 'anthropic':
       if (!apiKey) {
-        // No API key → fall through to OpenAI-compatible with a warning.
-        // Many gateways (OpenRouter, etc.) proxy Anthropic models through
-        // an OpenAI-compatible endpoint, so this is a valid configuration.
         // eslint-disable-next-line no-console
         console.warn(
           '[ProviderAdapter] Anthropic provider selected but no apiKey provided. ' +
