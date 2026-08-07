@@ -106,4 +106,22 @@ describe('resolveSessionArg', () => {
   it('returns null for an unknown name', () => {
     expect(resolveSessionArg(workDir, 'does-not-exist')).toBeNull()
   })
+
+  it('rejects relative paths escaping the sessions root', () => {
+    // Plant a conversation.json outside the project to prove it can't be reached
+    const outside = join(workDir, '..', 'evil', 'conversation.json')
+    const outsideDir = join(workDir, '..', 'evil')
+    mkdirSync(outsideDir, { recursive: true })
+    writeFileSync(outside, JSON.stringify({ version: 2, messages: [] }), 'utf8')
+    try {
+      expect(resolveSessionArg(workDir, '../evil')).toBeNull()
+      expect(resolveSessionArg(workDir, join('..', 'evil'))).toBeNull()
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects args containing null bytes', () => {
+    expect(resolveSessionArg(workDir, 'bad\0name')).toBeNull()
+  })
 })

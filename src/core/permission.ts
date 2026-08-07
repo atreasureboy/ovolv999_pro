@@ -208,6 +208,8 @@ export function getModeBehavior(
   if (mode === 'acceptEdits') {
     const editTools = ['Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep']
     if (editTools.includes(toolName)) return 'allow'
+    // Documented contract: "auto-approve file edits, still gate shell commands"
+    if (toolName === 'Bash') return 'ask'
     return isDangerous ? 'ask' : 'allow'
   }
 

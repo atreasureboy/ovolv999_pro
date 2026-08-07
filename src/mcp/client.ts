@@ -95,7 +95,7 @@ export class McpClient {
       })
     } catch (err: unknown) {
       throw new Error(
-        `Failed to spawn MCP server "${this.serverName}": ${(err as Error).message}`,
+        `Failed to spawn MCP server "${this.serverName}": ${err instanceof Error ? err.message : String(err)}`,
         { cause: err },
       )
     }
@@ -209,7 +209,9 @@ export class McpClient {
     try {
       this.proc.stdin.write(JSON.stringify(msg) + '\n')
     } catch (err: unknown) {
-      this.logger.error(`MCP "${this.serverName}" write failed`, { error: (err as Error).message })
+      this.logger.error(`MCP "${this.serverName}" write failed`, {
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 

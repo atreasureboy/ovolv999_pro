@@ -72,7 +72,7 @@ ovolv999 是一个**纯 Agent 基座框架**，仿 Claude Code，核心设计参
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║                        ovolv999 — 统一 Harness + 模块化 Agent 基座             ║
-║              85 files · 15,800+ lines · tsc 0 · eslint 0 · 327+ tests         ║
+║              85 files · 16,200+ lines · tsc 0 · eslint 0 · 360 tests          ║
 ║               Runtime deps: openai · glob · zod (仅 3 个)                     ║
 ║               API retry: 5x exponential backoff · 120s timeout                ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
@@ -239,7 +239,11 @@ model→上下文窗口映射内置常见模型（gpt-4o / claude-sonnet-4-x / d
 
 规则 (first match wins):
   { tool?: "Bash", pattern?: "rm -rf", action: "allow" | "deny" | "ask" }
-  pattern = 工具指纹的子串匹配（Bash→命令串, Write/Edit→文件路径…）
+  pattern = 对工具指纹做精确或 glob 匹配（Bash→命令串, Write/Edit→文件路径…）：
+    "npm install"   精确匹配（仅该命令本身）
+    "npm *"         匹配 npm 及任意 npm 子命令（单个 * 结尾时末尾参数可选）
+    "src/*.ts"      glob，* 匹配任意字符
+  fingerprint 由工具决定（Bash=command, Read/Write/Edit=file_path, Grep=pattern…）
 
 Approver (DI 注入，UI 无关):
   CLI  → 交互式 y/n/always 提示（session 级 alwaysAllow 集合）

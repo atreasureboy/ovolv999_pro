@@ -175,7 +175,7 @@ export class ToolScheduler {
           return await executor.execute(tc.id, tc.name, input, toolContext, planMode, turnNumber)
         } catch (err: unknown) {
           return {
-            content: `Tool execution crashed: ${(err as Error).message}`,
+            content: `Tool execution crashed: ${err instanceof Error ? err.message : String(err)}`,
             isError: true,
           }
         }

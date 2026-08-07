@@ -73,6 +73,7 @@ function makeEngine(
     maxContextTokens?: number
     pricing?: { inputPer1M?: number; outputPer1M?: number }
     maxCostUsd?: number
+    systemPrompt?: string
   } = {},
 ): { engine: ExecutionEngine; eventLog: EventLog } {
   const eventLog = new EventLog(workDir)
@@ -91,6 +92,7 @@ function makeEngine(
     maxContextTokens: opts.maxContextTokens,
     pricing: opts.pricing,
     maxCostUsd: opts.maxCostUsd,
+    systemPrompt: opts.systemPrompt,
   }
   const engine = new ExecutionEngine(config, new Renderer())
   return { engine, eventLog }
@@ -207,6 +209,48 @@ describe('ExecutionEngine runTurn — max iterations exit', () => {
     )
     const { result } = await engine.runTurn('loop', [])
     expect(result.reason).toBe('max_iterations')
+  })
+})
+
+describe('ExecutionEngine runTurn — Bash permission gate', () => {
+  it('ask-mode: consults the approver for shell commands', async () => {
+    const seen: string[] = []
+    const approver: Approver = (req) => {
+      seen.push(`${req.tool}:${req.fingerprint}`)
+      return Promise.resolve(true)
+    }
+    const checker = new PermissionChecker('ask', [], approver)
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Bash', arguments: { command: 'echo permission-probe' } }]),
+        textResponse('done'),
+      ],
+      // systemPrompt carries the mutation keyword so the engine's TaskIntent
+      // (classified at construction) allows Bash — otherwise an informational
+      // intent policy-blocks the shell before the permission gate is reached.
+      { permissionChecker: checker, systemPrompt: 'create the output file as requested' },
+    )
+    const { newHistory } = await engine.runTurn('create the output by running the command', [])
+    expect(seen.some((s) => s.startsWith('Bash:'))).toBe(true) // gate was consulted
+    const toolMsg = newHistory.find((m) => m.role === 'tool')
+    expect(String(toolMsg?.content)).toContain('permission-probe') // approved → executed
+  })
+
+  it('auto-mode: user deny rules still apply to Bash commands', async () => {
+    const checker = new PermissionChecker('auto', [
+      { tool: 'Bash', pattern: 'echo blocked-probe', action: 'deny' },
+    ])
+    const { engine } = makeEngine(
+      [
+        toolCallResponse([{ name: 'Bash', arguments: { command: 'echo blocked-probe' } }]),
+        textResponse('done'),
+      ],
+      { permissionChecker: checker, systemPrompt: 'create the output file as requested' },
+    )
+    const { newHistory } = await engine.runTurn('create the output by running the command', [])
+    const toolMsg = newHistory.find((m) => m.role === 'tool')
+    expect(String(toolMsg?.content)).toContain('Permission denied')
+    expect(String(toolMsg?.content)).not.toContain('blocked-probe]')
   })
 })
 

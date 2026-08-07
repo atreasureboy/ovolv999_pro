@@ -110,6 +110,19 @@ Supports HTML-to-Markdown conversion, meta-description extraction, and paginatio
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       return { content: 'Error: URL must start with http:// or https://', isError: true }
     }
+    // Block cloud credential-metadata endpoints (SSR into the instance itself).
+    // 169.254.169.254 serves IAM credentials on AWS/GCP/Azure/OpenStack.
+    try {
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, '')
+      if (host === '169.254.169.254' || host === 'metadata.google.internal') {
+        return {
+          content: `Error: fetching ${host} is blocked (cloud metadata endpoint)`,
+          isError: true,
+        }
+      }
+    } catch {
+      return { content: 'Error: invalid URL', isError: true }
+    }
 
     const maxLen =
       typeof max_length === 'number' ? Math.min(max_length, MAX_CONTENT_LENGTH) : MAX_CONTENT_LENGTH

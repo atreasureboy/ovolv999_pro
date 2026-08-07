@@ -7,7 +7,7 @@
  * (SIGTERM → SIGKILL after 5 s)
  */
 
-import { exec, spawn } from 'child_process'
+import { spawn } from 'child_process'
 import type { Tool, ToolContext, ToolDefinition, ToolResult } from '../core/types.js'
 import { BASH_DESCRIPTION } from '../prompts/tools.js'
 import { mkdirSync } from 'fs'
@@ -156,37 +156,48 @@ export class BashTool implements Tool {
         const safeCmd = command.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 40)
         const followLogFile = join(followLogDir, `${ts}_${safeCmd}_follow.log`)
 
-        // Wrap command: tee duplicates output so the LLM captures it AND the follow log gets it
-        actualCommand = `{ ${command}; } 2>&1 | tee -a "${followLogFile}"`
+        // Wrap command: tee duplicates output so the LLM captures it AND the follow log gets it.
+        // pipefail preserves the command's exit code through the pipeline.
+        actualCommand = `set -o pipefail; { ${command}; } 2>&1 | tee -a "${followLogFile}"`
 
         // Launch a tmux session with tail -f for user viewing
         const tmuxSessionName = `ovogo-follow-${ts}`
         let paneJoined = false
-        try {
-          spawn('tmux', ['new-session', '-d', '-s', tmuxSessionName, '-x', '200', '-y', '50'], {
+        // spawn() emits 'error' asynchronously when the binary is missing —
+        // without a listener that crashes the process, so every fire-and-forget
+        // tmux spawn gets a noop error handler.
+        const tmuxSpawn = (args: string[], detached = false) => {
+          const p = spawn('tmux', args, {
             cwd: context.cwd,
-            detached: true,
+            ...(detached ? { detached: true } : {}),
           })
-          spawn(
-            'tmux',
-            ['send-keys', '-t', tmuxSessionName, `tail -n +1 -f "${followLogFile}"`, 'Enter'],
-            {
-              cwd: context.cwd,
-            },
-          )
+          p.on('error', () => undefined)
+          return p
+        }
+        try {
+          tmuxSpawn(['new-session', '-d', '-s', tmuxSessionName, '-x', '200', '-y', '50'], true)
+          tmuxSpawn([
+            'send-keys',
+            '-t',
+            tmuxSessionName,
+            `tail -n +1 -f "${followLogFile}"`,
+            'Enter',
+          ])
           // Try to join the follow pane into the user's current tmux window
           try {
             const currentTmux = process.env.TMUX_PANE
               ? process.env.TMUX?.split(',')[0]?.replace(/^\//, '')
               : null
             if (currentTmux) {
-              spawn(
-                'tmux',
-                ['join-pane', '-t', `${currentTmux}`, '-s', `${tmuxSessionName}`, '-l', '15'],
-                {
-                  cwd: context.cwd,
-                },
-              )
+              tmuxSpawn([
+                'join-pane',
+                '-t',
+                `${currentTmux}`,
+                '-s',
+                `${tmuxSessionName}`,
+                '-l',
+                '15',
+              ])
               paneJoined = true
             }
           } catch {
@@ -199,7 +210,7 @@ export class BashTool implements Tool {
 
           followCleanup = () => {
             try {
-              spawn('tmux', ['kill-session', '-t', tmuxSessionName], { detached: true })
+              tmuxSpawn(['kill-session', '-t', tmuxSessionName], true)
             } catch {
               /* ignore */
             }
@@ -209,119 +220,133 @@ export class BashTool implements Tool {
         }
       }
 
-      const child = exec(
-        actualCommand,
+      // spawn (not exec): on POSIX we detach into a new process group so
+      // abort/timeout can signal the WHOLE tree via kill(-pid). With exec the
+      // child shared our group — kill(-pid) threw ESRCH and only the shell
+      // died, leaving grandchildren (npm/node/build workers) orphaned.
+      const isWin = process.platform === 'win32'
+      const child = spawn(
+        SHELL,
+        isWin ? ['/d', '/s', '/c', actualCommand] : ['-c', actualCommand],
         {
           cwd: context.cwd,
-          timeout: timeoutMs,
-          maxBuffer: 50 * 1024 * 1024,
           env: { ...safeEnv(), TERM: 'dumb' },
-          shell: SHELL,
-        },
-        (err, stdout, stderr) => {
-          // Remove the abort listener to prevent it firing after process ends
-          if (context.signal) {
-            context.signal.removeEventListener('abort', onAbort)
-          }
-
-          // Clean up follow mode resources
-          if (followCleanup) {
-            followCleanup()
-          }
-
-          if (settled) return
-          settled = true
-
-          // Check if we were cancelled
-          if (context.signal?.aborted) {
-            resolve({ content: 'Command cancelled.', isError: true })
-            return
-          }
-
-          if (!err) {
-            const combined = [stdout, stderr].filter(Boolean).join('\n').trimEnd()
-            const prefix = follow_mode
-              ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n`
-              : ''
-            resolve({
-              content: truncateOutput(prefix + combined, MAX_OUTPUT_LENGTH) || '(no output)',
-              isError: false,
-              exitCode: 0,
-              stdout: stdout || '',
-              stderr: stderr || '',
-            })
-            return
-          }
-
-          const nodeErr = err as NodeJS.ErrnoException & {
-            killed?: boolean
-            signal?: string
-            stdout?: string
-            stderr?: string
-            code?: number
-          }
-
-          if (nodeErr.killed || nodeErr.signal === 'SIGTERM') {
-            resolve({ content: `Command timed out after ${timeoutMs / 1000}s`, isError: true })
-            return
-          }
-
-          // Non-zero exit — provide stdout+stderr so the LLM can diagnose
-          const out = [nodeErr.stdout ?? stdout, nodeErr.stderr ?? stderr]
-            .filter(Boolean)
-            .join('\n')
-            .trimEnd()
-          const exitCode = nodeErr.code ?? 1
-          const prefix = follow_mode
-            ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n`
-            : ''
-          resolve({
-            content: truncateOutput(
-              prefix + `Exit code: ${exitCode}\n${out}`,
-              MAX_OUTPUT_LENGTH,
-            ).trimEnd(),
-            isError: false, // non-zero exit is not necessarily fatal
-            exitCode,
-            stdout: stdout || '',
-            stderr: stderr || '',
-          })
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: !isWin,
         },
       )
 
+      const MAX_STREAM_CHARS = 50 * 1024 * 1024
+      let stdout = ''
+      let stderr = ''
+      child.stdout?.setEncoding('utf8')
+      child.stderr?.setEncoding('utf8')
+      child.stdout?.on('data', (text: string) => {
+        if (stdout.length < MAX_STREAM_CHARS)
+          stdout += text.slice(0, MAX_STREAM_CHARS - stdout.length)
+      })
+      child.stderr?.on('data', (text: string) => {
+        if (stderr.length < MAX_STREAM_CHARS)
+          stderr += text.slice(0, MAX_STREAM_CHARS - stderr.length)
+      })
+
+      const killTree = (signal: NodeJS.Signals) => {
+        if (isWin) {
+          try {
+            child.kill(signal)
+          } catch {
+            /* already gone */
+          }
+          return
+        }
+        const pid = child.pid
+        if (pid === undefined) return
+        try {
+          process.kill(-pid, signal)
+        } catch {
+          try {
+            child.kill(signal)
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+      const escalateToSigkill = () => {
+        const t = setTimeout(() => killTree('SIGKILL'), 5_000)
+        if (typeof t.unref === 'function') t.unref()
+      }
+
+      let timedOut = false
+      const timeoutTimer = setTimeout(() => {
+        timedOut = true
+        killTree('SIGTERM')
+        escalateToSigkill()
+      }, timeoutMs)
+
+      const cleanup = () => {
+        clearTimeout(timeoutTimer)
+        if (context.signal) context.signal.removeEventListener('abort', onAbort)
+        if (followCleanup) followCleanup()
+      }
+
+      child.on('error', (err) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve({ content: `Failed to start command: ${err.message}`, isError: true })
+      })
+
+      child.on('close', (code) => {
+        if (settled) return
+        settled = true
+        cleanup()
+
+        if (context.signal?.aborted) {
+          resolve({ content: 'Command cancelled.', isError: true })
+          return
+        }
+        if (timedOut) {
+          resolve({ content: `Command timed out after ${timeoutMs / 1000}s`, isError: true })
+          return
+        }
+
+        const prefix = follow_mode
+          ? `[Spectator mode: output streamed to tmux pane] ${followModeHint}\n`
+          : ''
+        if (code === 0) {
+          const combined = [stdout, stderr].filter(Boolean).join('\n').trimEnd()
+          resolve({
+            content: truncateOutput(prefix + combined, MAX_OUTPUT_LENGTH) || '(no output)',
+            isError: false,
+            exitCode: 0,
+            stdout,
+            stderr,
+          })
+          return
+        }
+
+        // Non-zero exit — provide stdout+stderr so the LLM can diagnose
+        const exitCode = code ?? 1
+        const out = [stdout, stderr].filter(Boolean).join('\n').trimEnd()
+        resolve({
+          content: truncateOutput(
+            prefix + `Exit code: ${exitCode}\n${out}`,
+            MAX_OUTPUT_LENGTH,
+          ).trimEnd(),
+          isError: false, // non-zero exit is not necessarily fatal
+          exitCode,
+          stdout,
+          stderr,
+        })
+      })
+
       // ── Abort handler — kill entire process group ────────────
-      // Send SIGTERM to process group
       const onAbort = () => {
         if (settled) return
         settled = true
-
-        const pid = child.pid
-        if (pid !== undefined) {
-          if (process.platform === 'win32') {
-            try {
-              child.kill('SIGTERM')
-            } catch {
-              /* ignore */
-            }
-          } else {
-            try {
-              process.kill(-pid, 'SIGTERM')
-            } catch {
-              try {
-                child.kill('SIGTERM')
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-          setTimeout(() => {
-            try {
-              child.kill('SIGKILL')
-            } catch {
-              /* ignore */
-            }
-          }, 5_000)
-        }
-
+        cleanup()
+        killTree('SIGTERM')
+        escalateToSigkill()
         resolve({ content: 'Command cancelled.', isError: true })
       }
 

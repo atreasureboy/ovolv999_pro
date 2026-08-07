@@ -60,18 +60,17 @@ function runVerification(
   const results: string[] = []
   let allPassed = true
 
+  const label = (cmd: string) => (cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd)
   for (const cmd of commands) {
     try {
       execSync(cmd, { cwd, encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] })
-      const label = cmd.split(' ')[1] || cmd
-      results.push(`✓ ${label} — passed`)
+      results.push(`✓ ${label(cmd)} — passed`)
     } catch (err: unknown) {
       allPassed = false
       const e = err as { stdout?: string; stderr?: string; message?: string }
       const output = (e.stdout ?? '') + (e.stderr ?? '')
       const trimmed = output.trim().slice(0, 800)
-      const label = cmd.split(' ')[1] || cmd
-      results.push(`✗ ${label} — FAILED\n${trimmed}`)
+      results.push(`✗ ${label(cmd)} — FAILED\n${trimmed}`)
     }
   }
 
@@ -253,13 +252,14 @@ async function runAgentTaskInner(
     prompt_preview: normalizedPrompt.slice(0, 500),
   })
 
+  const onParentAbort = () => childEngine.abort()
   if (context.signal) {
     if (context.signal.aborted) {
       mainRenderer.agentDone(description, false)
       if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
       return { content: `[${agentLabel}] 已取消（父任务中止）`, isError: true }
     }
-    context.signal.addEventListener('abort', () => childEngine.abort(), { once: true })
+    context.signal.addEventListener('abort', onParentAbort, { once: true })
   }
 
   const HEARTBEAT_MS = 2 * 60 * 1000
@@ -267,12 +267,16 @@ async function runAgentTaskInner(
     const elapsedSec = Math.round((Date.now() - agentStartTime) / 1000)
     mainRenderer.agentHeartbeat(agentLabel, description, elapsedSec)
   }, HEARTBEAT_MS)
+  // Don't let the heartbeat keep the process alive after everything else exits
+  if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref()
 
   // ── Deadline / timeout enforcement ──
   const timeoutMs = agentConfig.timeoutMs ?? 0
+  let timedOut = false
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null
   if (timeoutMs > 0) {
     timeoutTimer = setTimeout(() => {
+      timedOut = true
       childEngine.abort()
       appendAgentEvent(mainConfig, {
         event: 'delegation.timeout',
@@ -290,14 +294,21 @@ async function runAgentTaskInner(
     const { result } = await childEngine.runTurn(delegatedPrompt, [])
     if (timeoutTimer) clearTimeout(timeoutTimer)
     clearInterval(heartbeatTimer)
+    if (context.signal) context.signal.removeEventListener('abort', onParentAbort)
     const durationMs = Date.now() - agentStartTime
 
-    mainRenderer.agentDone(description, result.reason !== 'error')
+    // Timeout aborts surface as reason 'error' — treat both as failure so the
+    // parent LLM sees isError:true and can react instead of assuming success.
+    const childFailed = result.reason === 'error' || timedOut
+    mainRenderer.agentDone(description, !childFailed)
     if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
+    const timeoutNote = timedOut
+      ? `\n[超时中止] 子 agent 在 ${Math.round(timeoutMs / 1000)}s 时限内未完成，已被强制中止。\n`
+      : ''
 
     // ── Verification Gate (AgentOS "No Tuple, No Merge") ──
     let verifySection = ''
-    if (verify && result.reason !== 'error' && !agentConfig.identity.planMode) {
+    if (verify && !childFailed && !agentConfig.identity.planMode) {
       const verifyResult = runVerification(
         context.cwd,
         mainConfig.verifyCommands ?? DEFAULT_VERIFY_COMMANDS,
@@ -323,19 +334,19 @@ async function runAgentTaskInner(
       agentLabel,
       {
         description,
-        success: result.reason !== 'error',
-        reason: result.reason,
+        success: !childFailed,
+        reason: timedOut ? 'timeout' : result.reason,
         duration_ms: durationMs,
         call_depth: myDepth,
         output_preview: result.output.slice(0, 500),
       },
-      [agentLabel, 'invoke', result.reason !== 'error' ? 'success' : 'error'],
+      [agentLabel, 'invoke', !childFailed ? 'success' : 'error'],
     )
 
     if (!result.output) {
       return {
-        content: `[${agentLabel}] "${description}" 完成（${result.reason}），无文本输出。${verifySection}`,
-        isError: false,
+        content: `[${agentLabel}] "${description}" 完成（${result.reason}），无文本输出。${timeoutNote}${verifySection}`,
+        isError: childFailed,
       }
     }
 
@@ -350,24 +361,26 @@ async function runAgentTaskInner(
     }
 
     return {
-      content: `[${agentLabel}] "${description}":\n\n${result.output}${verifySection}`,
-      isError: false,
+      content: `[${agentLabel}] "${description}":\n\n${result.output}${timeoutNote}${verifySection}`,
+      isError: childFailed,
     }
   } catch (err: unknown) {
     if (timeoutTimer) clearTimeout(timeoutTimer)
     clearInterval(heartbeatTimer)
+    if (context.signal) context.signal.removeEventListener('abort', onParentAbort)
     mainRenderer.agentDone(description, false)
     if (paneSlot) tmuxLayout.releaseSlot(paneSlot.slot)
+    const errMsg = err instanceof Error ? err.message : String(err)
     appendAgentEvent(mainConfig, {
       event: 'delegation.error',
       agent_label: agentLabel,
       description,
       success: false,
       duration_ms: Date.now() - agentStartTime,
-      error: (err as Error).message,
+      error: errMsg,
     })
     return {
-      content: `[${agentLabel}] "${description}" 异常: ${(err as Error).message}`,
+      content: `[${agentLabel}] "${description}" 异常: ${errMsg}`,
       isError: true,
     }
   }

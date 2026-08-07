@@ -77,7 +77,7 @@ export function wrapMcpTool(client: McpClient, descriptor: McpToolDescriptor): T
         }
       } catch (err: unknown) {
         return {
-          content: `[${callName}] invocation failed: ${(err as Error).message}`,
+          content: `[${callName}] invocation failed: ${err instanceof Error ? err.message : String(err)}`,
           isError: true,
         }
       }
@@ -117,10 +117,11 @@ export async function loadMcpServers(
       summary.push(`mcp:${name} — ${descriptors.length} tools`)
       logger.info(`MCP server "${name}" contributed ${descriptors.length} tool(s)`)
     } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err)
       logger.warn(`MCP server "${name}" failed to connect, skipping`, {
-        error: (err as Error).message,
+        error: errMsg,
       })
-      summary.push(`mcp:${name} — FAILED (${(err as Error).message})`)
+      summary.push(`mcp:${name} — FAILED (${errMsg})`)
       try {
         await client.close()
       } catch {

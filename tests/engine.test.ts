@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { partitionToolCalls } from '../src/core/toolRuntime/toolScheduler.js'
-import type { Tool } from '../src/core/types.js'
+import { ensureToolResultsComplete } from '../src/core/engine.js'
+import type { Tool, OpenAIMessage } from '../src/core/types.js'
 import {
   calculateContextState,
   estimateTokens,
@@ -329,5 +330,51 @@ describe('formatMessagesForCritic', () => {
     expect(formatted).toContain('Let me check')
     expect(formatted).toContain('[TOOL_CALL]')
     expect(formatted).toContain('Read')
+  })
+})
+
+// ── ensureToolResultsComplete ───────────────────────────────────────────────
+
+describe('ensureToolResultsComplete', () => {
+  const toolCallMsg = (id: string, name: string): OpenAIMessage => ({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{ id, type: 'function', function: { name, arguments: '{}' } }],
+  })
+  const toolResultMsg = (id: string, name: string): OpenAIMessage => ({
+    role: 'tool',
+    tool_call_id: id,
+    name,
+    content: 'ok',
+  })
+
+  it('leaves complete histories untouched', () => {
+    const messages: OpenAIMessage[] = [
+      { role: 'user', content: 'hi' },
+      toolCallMsg('a1', 'Read'),
+      toolResultMsg('a1', 'Read'),
+    ]
+    ensureToolResultsComplete(messages)
+    expect(messages).toHaveLength(3)
+  })
+
+  it('fills synthetic results for orphaned tool calls', () => {
+    const messages: OpenAIMessage[] = [
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'b1', type: 'function', function: { name: 'Read', arguments: '{}' } },
+          { id: 'b2', type: 'function', function: { name: 'Glob', arguments: '{}' } },
+        ],
+      },
+      toolResultMsg('b1', 'Read'), // b2 never got a result (aborted mid-batch)
+    ]
+    ensureToolResultsComplete(messages)
+    const filled = messages.find((m) => m.tool_call_id === 'b2')
+    expect(filled).toBeDefined()
+    expect(filled?.name).toBe('Glob')
+    expect(String(filled?.content)).toMatch(/aborted/i)
   })
 })

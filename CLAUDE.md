@@ -153,15 +153,15 @@ npx tsx bin/ovogogogo.ts
 
 ## 测试统计
 
-- 测试文件: 23
-- 测试用例: 342
+- 测试文件: 25
+- 测试用例: 360
 - 覆盖率目标: >85% 核心模块
 
 ## 项目健康基线
 
 ```
 tsc --noEmit:  0 errors
-vitest run:    342 passed · 0 failed · 23 files
+vitest run:    360 passed · 0 failed · 25 files
 eslint:         0 errors · 0 warnings
 prettier:       0 violations (src/ bin/ tests/)
 runtime deps:   3 (openai · glob · zod)

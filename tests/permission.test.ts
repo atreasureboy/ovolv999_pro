@@ -157,6 +157,14 @@ describe('getModeBehavior', () => {
     expect(getModeBehavior('acceptEdits', 'Bash', true)).toBe('ask')
   })
 
+  it('acceptEdits still gates non-dangerous Bash (documented contract)', () => {
+    // "Auto-approve file edits, still gate shell commands" — Bash must ask
+    // even when the command itself isn't classified dangerous.
+    expect(getModeBehavior('acceptEdits', 'Bash', false)).toBe('ask')
+    expect(getModeBehavior('acceptEdits', 'Read', false)).toBe('allow')
+    expect(getModeBehavior('acceptEdits', 'Agent', false)).toBe('allow')
+  })
+
   it('bypassPermissions allows everything', () => {
     expect(getModeBehavior('bypassPermissions', 'Bash', true)).toBe('allow')
   })

@@ -7,9 +7,19 @@
  *   v2: envelope with updatedAt + lastOutcome summary
  */
 
-import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'fs'
+import {
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+  renameSync,
+} from 'fs'
 import { join, resolve } from 'path'
-import { isPathWithin } from './pathSecurity.js'
+import { isPathWithin, containsNullByte } from './pathSecurity.js'
 import type { OpenAIMessage } from './types.js'
 
 export const CURRENT_SESSION_VERSION = 2
@@ -83,6 +93,23 @@ function migrateV1(raw: Record<string, unknown>): ConversationSnapshot {
   }
 }
 
+/**
+ * Crash-safe write: temp file → fsync → rename. A direct writeFileSync could
+ * leave a torn conversation.json if the process dies mid-write, corrupting
+ * every future --resume of the session.
+ */
+function writeJsonAtomic(filePath: string, data: string): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`
+  const fd = openSync(tmpPath, 'w')
+  try {
+    writeFileSync(fd, data, 'utf8')
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+  renameSync(tmpPath, filePath)
+}
+
 export function saveConversation(
   sessionDir: string,
   messages: OpenAIMessage[],
@@ -101,7 +128,7 @@ export function saveConversation(
     lastOutcome: outcome,
   }
   try {
-    writeFileSync(join(sessionDir, 'conversation.json'), JSON.stringify(envelope, null, 2), 'utf8')
+    writeJsonAtomic(join(sessionDir, 'conversation.json'), JSON.stringify(envelope, null, 2))
   } catch {
     /* best-effort */
   }
@@ -189,10 +216,23 @@ export function resolveSessionArg(cwd: string, arg: string): string | null {
     const sessions = listSessions(cwd)
     return sessions[0]?.dir ?? null
   }
-  if (existsSync(join(arg, 'conversation.json'))) return arg
-  const candidate = join(cwd, 'sessions', arg)
-  const resolved = resolve(candidate)
-  if (!isPathWithin(resolved, join(cwd, 'sessions'))) return null
+  if (containsNullByte(arg)) return null
+  const sessionsRoot = join(cwd, 'sessions')
+  const isAbsoluteArg = arg.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(arg)
+  if (isAbsoluteArg) {
+    // Explicit absolute path = direct user intent; keep the containment rule
+    // for relative args only.
+    return existsSync(join(arg, 'conversation.json')) ? arg : null
+  }
+  // Relative args must resolve inside the sessions root — previously this
+  // branch was skipped for existing dirs, so `--resume ../../somewhere` could
+  // be used to read arbitrary conversation.json files outside the project.
+  const direct = resolve(arg)
+  if (isPathWithin(direct, sessionsRoot) && existsSync(join(direct, 'conversation.json'))) {
+    return direct
+  }
+  const resolved = resolve(join(cwd, 'sessions', arg))
+  if (!isPathWithin(resolved, sessionsRoot)) return null
   if (existsSync(join(resolved, 'conversation.json'))) return resolved
   return null
 }

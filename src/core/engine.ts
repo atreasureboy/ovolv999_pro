@@ -156,6 +156,35 @@ function classifyEngineError(err: unknown): EngineError {
   }
 }
 
+/**
+ * Ensure every assistant tool_call has a matching tool result.
+ *
+ * An abort mid-batch (Ctrl+C during a parallel batch, or a serial batch cut
+ * short) can leave assistant messages whose tool_calls were never answered.
+ * Providers reject a history where a tool_call has no tool result, which would
+ * break --resume. We append a synthetic result for each orphaned call.
+ */
+export function ensureToolResultsComplete(messages: OpenAIMessage[]): void {
+  const pending = new Map<string, string>() // id → tool name
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc?.id) pending.set(tc.id, tc.function?.name ?? 'unknown')
+      }
+    } else if (msg.role === 'tool' && msg.tool_call_id) {
+      pending.delete(msg.tool_call_id)
+    }
+  }
+  for (const [id, name] of pending) {
+    messages.push({
+      role: 'tool',
+      tool_call_id: id,
+      name,
+      content: 'Tool call was aborted before it could complete.',
+    })
+  }
+}
+
 // ── Internal types ───────────────────────────────────────────────────────────
 
 interface StreamingToolCall {
@@ -873,6 +902,14 @@ export class ExecutionEngine {
             }
           }
 
+          // A user abort must never be retried, whatever the error text looks
+          // like (e.g. "body stream aborted" would otherwise match the
+          // recoverable list and schedule a backoff retry after Ctrl+C).
+          if (turnAbortController.signal.aborted) {
+            result = { stopped: true, reason: 'error', output: finalOutput, error: rawMsg }
+            break retryLoop
+          }
+
           // Apply recovery strategy based on error class
           if (
             engineErr.class === 'recoverable' &&
@@ -928,6 +965,10 @@ export class ExecutionEngine {
         })
       }
     }
+
+    // No tool_call may be left unanswered — a torn history is rejected by the
+    // provider on the next call, which would make the session unresumable.
+    ensureToolResultsComplete(messages)
 
     this.config.hookRunner?.runOnComplete?.(result)
     this.eventEmitter.emit({ type: 'RUN_COMPLETED', result })
