@@ -16,6 +16,9 @@ function getShell(): string {
   return process.env.OVOGO_SHELL || process.env.SHELL || '/bin/bash'
 }
 
+/** Grace period (ms) before escalating SIGTERM → SIGKILL. */
+const DEFAULT_SIGKILL_GRACE_MS = 3000
+
 export interface TaskInfo {
   id: string
   command: string
@@ -129,14 +132,46 @@ export class AsyncTaskManager {
       return { success: true, message: `Task '${id}' was already finished` }
     }
 
+    const proc = task.process
+    const pid = proc.pid
+
     try {
-      task.process.kill('SIGTERM')
+      proc.kill('SIGTERM')
       task.info.status = 'killed'
       task.info.endTime = new Date().toISOString()
-      return { success: true, message: `Task '${id}' terminated` }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       return { success: false, message: `Failed to kill task: ${msg}` }
+    }
+
+    // Escalate to SIGKILL after a grace period. detached:false means there's
+    // no process group to kill, so we target the direct child only.
+    if (pid !== undefined) {
+      setTimeout(() => {
+        try {
+          proc.kill('SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }, DEFAULT_SIGKILL_GRACE_MS)
+    }
+    return { success: true, message: `Task '${id}' terminated` }
+  }
+
+  /** Terminate all running tasks. Called from engine.dispose() so spawned
+   * tasks don't survive engine shutdown as zombies. */
+  dispose(): void {
+    for (const id of this.tasks.keys()) {
+      const task = this.tasks.get(id)
+      if (task && task.info.status === 'running') {
+        try {
+          task.process.kill('SIGTERM')
+          task.info.status = 'killed'
+          task.info.endTime = new Date().toISOString()
+        } catch {
+          /* already gone */
+        }
+      }
     }
   }
 }

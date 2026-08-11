@@ -61,6 +61,17 @@ export class ThinkingTagFilter {
     return visible
   }
 
+  /**
+   * Reset all per-turn state. Called at the start of each runTurn() so a
+   * turn interrupted mid-`<think>` tag doesn't leave `insideThinking` true
+   * and swallow the next turn's output.
+   */
+  reset(): void {
+    this.buffer = ''
+    this.insideThinking = false
+    this.thinkingAccumulator = ''
+  }
+
   private keepPossibleTagPrefix(value: string, tag: string): string {
     const maxLength = Math.min(value.length, tag.length - 1)
     for (let length = maxLength; length > 0; length--) {

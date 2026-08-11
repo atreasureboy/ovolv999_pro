@@ -25,6 +25,8 @@ export class RateLimiter {
     resolve: () => void
     tokens: number
   }> = []
+  /** Pending timer that drains the queue once the bucket can satisfy the head waiter. */
+  private drainTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(opts: RateLimiterOptions = {}) {
     this.maxTokens = opts.maxTokens ?? 10
@@ -54,6 +56,27 @@ export class RateLimiter {
   }
 
   /**
+   * Schedule a drain once the bucket should hold enough tokens for the head
+   * waiter. Without this, a queued caller's Promise never resolves — `refill()`
+   * only runs inside `drain()`/`acquire()`, and once a caller is queued neither
+   * is invoked again, deadlocking the engine at `await this.rateLimiter?.acquire()`.
+   */
+  private scheduleDrain(): void {
+    if (this.drainTimer || this.waitQueue.length === 0) return
+    const head = this.waitQueue[0]
+    const needed = Math.max(0, head.tokens - this.availableTokens)
+    const delayMs = needed > 0 ? Math.ceil((needed / this.refillRate) * 1000) + 1 : 1
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null
+      this.drain()
+      // If waiters remain (bucket still short), reschedule.
+      if (this.waitQueue.length > 0) this.scheduleDrain()
+    }, delayMs)
+    // Don't keep the event loop alive solely for rate-limit draining.
+    if (typeof this.drainTimer.unref === 'function') this.drainTimer.unref()
+  }
+
+  /**
    * Acquire `tokens` tokens. Resolves immediately if enough are available;
    * otherwise queues the caller and resolves when the bucket refills.
    */
@@ -65,6 +88,8 @@ export class RateLimiter {
     }
     return new Promise((resolve) => {
       this.waitQueue.push({ resolve, tokens })
+      // Newly queued waiter — arm the drain timer so it eventually resolves.
+      if (this.waitQueue.length === 1) this.scheduleDrain()
     })
   }
 
@@ -87,6 +112,10 @@ export class RateLimiter {
 
   /** Reset the bucket to full capacity. */
   reset(): void {
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer)
+      this.drainTimer = null
+    }
     this.currentTokens = this.maxTokens
     this.lastRefillMs = Date.now()
     while (this.waitQueue.length) {

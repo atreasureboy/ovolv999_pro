@@ -114,7 +114,9 @@ export function parseCriticOutput(output: string): CriticIssue[] | null {
       const issues = parsed.issues
         .filter(
           (i: unknown): i is Record<string, unknown> =>
-            typeof i === 'object' && i !== null && typeof (i as Record<string, unknown>).problem === 'string',
+            typeof i === 'object' &&
+            i !== null &&
+            typeof (i as Record<string, unknown>).problem === 'string',
         )
         .map((i) => ({
           problem: String(i.problem),

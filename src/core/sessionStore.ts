@@ -7,12 +7,7 @@
  *   v2: envelope with updatedAt + lastOutcome summary
  */
 
-import {
-  readFileSync,
-  existsSync,
-  readdirSync,
-  statSync,
-} from 'fs'
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { join, resolve } from 'path'
 import { isPathWithin, containsNullByte } from './pathSecurity.js'
 import { atomicWriteSync } from './atomicWrite.js'

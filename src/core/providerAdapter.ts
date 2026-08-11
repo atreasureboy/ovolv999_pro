@@ -207,7 +207,10 @@ export class AnthropicAdapter implements ProviderAdapter {
       if (Array.isArray(systemPrompt)) {
         const blocks = [...systemPrompt] as Record<string, unknown>[]
         if (blocks.length > 0) {
-          blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: 'ephemeral' } }
+          blocks[blocks.length - 1] = {
+            ...blocks[blocks.length - 1],
+            cache_control: { type: 'ephemeral' },
+          }
         }
         body.system = blocks
       } else {
@@ -243,19 +246,37 @@ export class AnthropicAdapter implements ProviderAdapter {
 
 // ── Message conversion helpers ──────────────────────────────────────
 
-function convertMessages(messages: OpenAI.Chat.ChatCompletionMessageParam[]): AnthropicMessage[] {
+/** Convert OpenAI-style messages to Anthropic message format.
+ * Exported for testing; production callers use it via the adapter. */
+export function convertMessages(
+  messages: OpenAI.Chat.ChatCompletionMessageParam[],
+): AnthropicMessage[] {
   const result: AnthropicMessage[] = []
+
+  // Anthropic requires all tool_results for one assistant turn's tool_use calls
+  // to be grouped in a SINGLE user message. OpenAI represents each result as a
+  // separate `tool` message. We collapse consecutive tool messages into one
+  // user message so the Anthropic API accepts parallel tool calls (otherwise 400).
+  let pendingToolResults: AnthropicContentBlock[] = []
+  const flushToolResults = () => {
+    if (pendingToolResults.length > 0) {
+      result.push({ role: 'user', content: pendingToolResults })
+      pendingToolResults = []
+    }
+  }
 
   for (const msg of messages) {
     if (msg.role === 'system') continue // system is extracted separately
 
     if (msg.role === 'user') {
+      flushToolResults()
       const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)
       result.push({ role: 'user', content })
       continue
     }
 
     if (msg.role === 'assistant') {
+      flushToolResults()
       const toolCalls = (
         msg as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }
       ).tool_calls
@@ -289,18 +310,16 @@ function convertMessages(messages: OpenAI.Chat.ChatCompletionMessageParam[]): An
 
     if (msg.role === 'tool') {
       const toolMsg = msg as { tool_call_id: string; content: string; name?: string }
-      result.push({
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: toolMsg.tool_call_id,
-            content: toolMsg.content,
-          },
-        ],
+      pendingToolResults.push({
+        type: 'tool_result',
+        tool_use_id: toolMsg.tool_call_id,
+        content: toolMsg.content,
       })
     }
   }
+
+  // Flush any trailing tool results.
+  flushToolResults()
 
   return result
 }
@@ -527,11 +546,7 @@ async function* anthropicSSEToOpenAIChunks(
  */
 // ── Pluggable provider registry ────────────────────────────────────────
 
-type ProviderFactory = (
-  client: OpenAI,
-  apiKey?: string,
-  baseURL?: string,
-) => ProviderAdapter
+type ProviderFactory = (client: OpenAI, apiKey?: string, baseURL?: string) => ProviderAdapter
 
 const providerFactories = new Map<ProviderId, ProviderFactory>()
 

@@ -8,7 +8,17 @@
  */
 
 import { rename, unlink, stat, mkdir, lstat, realpath, open } from 'fs/promises'
-import { renameSync, statSync, mkdirSync, openSync, fsyncSync, writeFileSync, closeSync, fchmodSync } from 'fs'
+import {
+  renameSync,
+  unlinkSync,
+  statSync,
+  mkdirSync,
+  openSync,
+  fsyncSync,
+  writeFileSync,
+  closeSync,
+  fchmodSync,
+} from 'fs'
 import type { FileHandle } from 'fs/promises'
 import { dirname } from 'path'
 import { randomBytes } from 'crypto'
@@ -127,7 +137,11 @@ export async function statSafely(
  * snapshot saving during a sync REPL loop). Uses the same temp→fsync→rename
  * pattern as atomicWrite but blocks the event loop — keep data small.
  */
-export function atomicWriteSync(target: string, content: string, encoding: BufferEncoding = 'utf8'): void {
+export function atomicWriteSync(
+  target: string,
+  content: string,
+  encoding: BufferEncoding = 'utf8',
+): void {
   mkdirSync(dirname(target), { recursive: true })
 
   let existingMode: number | undefined
@@ -137,7 +151,8 @@ export function atomicWriteSync(target: string, content: string, encoding: Buffe
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
   }
 
-  const tmpPath = `${target}.tmp.${process.pid}.${Date.now()}`
+  const counter = (_tmpCounter = (_tmpCounter + 1) | 0)
+  const tmpPath = `${target}.tmp.${process.pid}.${Date.now()}.${counter}.${randomBytes(6).toString('hex')}`
   const fd = openSync(tmpPath, 'w')
   try {
     writeFileSync(fd, content, encoding)
@@ -148,5 +163,15 @@ export function atomicWriteSync(target: string, content: string, encoding: Buffe
   } finally {
     closeSync(fd)
   }
-  renameSync(tmpPath, target)
+  try {
+    renameSync(tmpPath, target)
+  } catch (err: unknown) {
+    // rename failed — don't leak the temp file.
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      /* rename error is more informative */
+    }
+    throw err
+  }
 }

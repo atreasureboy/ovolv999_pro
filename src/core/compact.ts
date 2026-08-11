@@ -173,6 +173,14 @@ function extractSummary(text: string): string {
 function serializeMessages(messages: OpenAIMessage[]): string {
   const parts: string[] = []
   for (const msg of messages) {
+    // Tool results are serialized exclusively here — don't also emit a
+    // `[TOOL]` line, which duplicates every tool message and wastes tokens.
+    if (msg.role === 'tool' && typeof msg.content === 'string') {
+      const preview = msg.content.slice(0, 500)
+      const truncated = msg.content.length > 500 ? ' ...[truncated]' : ''
+      parts.push(`[TOOL RESULT: ${msg.name ?? '?'}]: ${preview}${truncated}`)
+      continue
+    }
     const role = msg.role.toUpperCase()
     if (typeof msg.content === 'string' && msg.content) {
       parts.push(`[${role}]: ${msg.content}`)
@@ -181,11 +189,6 @@ function serializeMessages(messages: OpenAIMessage[]): string {
         .map((tc) => `  → ${tc.function.name}(${tc.function.arguments.slice(0, 200)})`)
         .join('\n')
       parts.push(`[ASSISTANT tool calls]:\n${calls}`)
-    }
-    if (msg.role === 'tool' && typeof msg.content === 'string') {
-      const preview = msg.content.slice(0, 500)
-      const truncated = msg.content.length > 500 ? ' ...[truncated]' : ''
-      parts.push(`[TOOL RESULT: ${msg.name ?? '?'}]: ${preview}${truncated}`)
     }
   }
   return parts.join('\n\n')

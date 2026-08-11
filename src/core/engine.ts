@@ -625,6 +625,11 @@ export class ExecutionEngine {
 
     const messages: OpenAIMessage[] = [...history, { role: 'user', content: userMessage }]
 
+    // Reset cross-turn state so a prior turn's partial state (an interrupted
+    // thinking tag, a stale stall timer) doesn't bleed into this turn.
+    this.thinkingFilter.reset()
+    this.progressMonitor.reset()
+
     let iterations = 0
     let finalOutput = ''
     let turnNumber = 0
@@ -1080,6 +1085,7 @@ export class ExecutionEngine {
 
     // 4. Terminate background tasks
     this.backgroundTaskManager.dispose()
+    this.asyncTaskManager.dispose()
 
     // 5. Release all resource locks
     this.resourceScheduler.releaseAll()

@@ -161,7 +161,6 @@ export class BackgroundTaskManager {
 
     task.stopped = true
     const pid = task.process.pid
-    const proc = task.process
     if (pid === undefined) return false
 
     try {
@@ -182,7 +181,9 @@ export class BackgroundTaskManager {
         }
         setTimeout(() => {
           try {
-            proc.kill('SIGKILL')
+            // Kill the whole process group, not just the direct child —
+            // proc.kill('SIGKILL') only reaps the shell and orphans grandchildren.
+            process.kill(-pid, 'SIGKILL')
           } catch {
             /* already gone */
           }

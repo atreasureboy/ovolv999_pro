@@ -365,5 +365,4 @@ export class PermissionChecker {
 
     return { allowed: false, reason: 'requires_approval (no approver wired)' }
   }
-
-  }
+}

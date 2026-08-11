@@ -77,6 +77,9 @@ function dropEmptyMessages(messages: OpenAIMessage[], protectedRange: number): n
   for (let i = messages.length - 1 - protectedRange; i >= 0; i--) {
     const msg = messages[i]
     if (msg.role === 'system') continue
+    // Never drop empty `tool` messages: they pair with an assistant tool_call,
+    // and removing them orphans the call (provider rejects the conversation).
+    if (msg.role === 'tool') continue
     if (isWhitespace(msg.content)) {
       messages.splice(i, 1)
     }
