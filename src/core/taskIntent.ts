@@ -40,6 +40,17 @@ export interface TaskIntent {
   userMessage: string
 }
 
+export type CustomIntentClassifier = (userMessage: string) => TaskIntent | null
+const customClassifiers: CustomIntentClassifier[] = []
+
+export function registerIntentClassifier(classifier: CustomIntentClassifier): () => void {
+  customClassifiers.push(classifier)
+  return () => {
+    const idx = customClassifiers.indexOf(classifier)
+    if (idx >= 0) customClassifiers.splice(idx, 1)
+  }
+}
+
 /**
  * 静态规则分类器
  */
@@ -52,7 +63,14 @@ export function classifyTaskIntent(
     expectedVerification?: VerificationRequirement[]
   } = {},
 ): TaskIntent {
+  // Check custom registered classifiers first
+  for (const custom of customClassifiers) {
+    const res = custom(userMessage)
+    if (res) return res
+  }
+
   const text = userMessage.toLowerCase()
+
   const explicit = options.explicitKind
   const planMode = options.planMode ?? false
   const explicitCriteria = options.explicitAcceptanceCriteria ?? []

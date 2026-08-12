@@ -59,3 +59,5 @@ export {
   TmuxSessionTool,
   TaskTool,
 }
+export { defineTool, type DefineToolOptions } from './defineTool.js'
+

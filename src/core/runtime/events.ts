@@ -78,3 +78,14 @@ export class RunEventEmitter {
     }
   }
 }
+
+/** Formats a RunEvent into Server-Sent Events (SSE) protocol format for web telemetry dashboards. */
+export function formatEventAsSSE(event: RunEvent): string {
+  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+}
+
+/** Formats a RunEvent into JSON-Lines format for telemetry loggers. */
+export function formatEventAsJsonL(event: RunEvent): string {
+  return JSON.stringify({ timestamp: new Date().toISOString(), ...event }) + '\n'
+}
+
